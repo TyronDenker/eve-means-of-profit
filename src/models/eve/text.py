@@ -14,3 +14,16 @@ class EveLocalizedText(BaseModel):
     ko: str | None = None
     ru: str | None = None
     zh: str | None = None
+
+
+class EveLocalizedTextRequired(BaseModel):
+    """Localized text with all translations required."""
+
+    de: str
+    en: str
+    es: str
+    fr: str
+    ja: str
+    ko: str
+    ru: str
+    zh: str
