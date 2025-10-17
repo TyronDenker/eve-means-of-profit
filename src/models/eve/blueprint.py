@@ -184,7 +184,7 @@ class EveBlueprintActivities(BaseModel):
 class EveBlueprint(BaseModel):
     """Represents an EVE Online blueprint with various activities."""
 
-    _key: int = Field(..., ge=681, le=88734)
+    id: int = Field(..., ge=681, le=88734)
     activities: EveBlueprintActivities
     blueprint_type_id: int = Field(..., ge=681, le=88734)
     max_production_limit: int = Field(..., ge=1, le=1000000)

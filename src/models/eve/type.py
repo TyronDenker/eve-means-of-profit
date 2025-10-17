@@ -8,7 +8,7 @@ from .text import EveLocalizedText
 class EveType(BaseModel):
     """Represents an EVE Online type with various attributes."""
 
-    _key: int = Field(
+    id: int = Field(
         ..., ge=0, le=371027, description="The unique identifier for the Eve type."
     )
     base_price: float | None = Field(
