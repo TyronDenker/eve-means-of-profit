@@ -17,6 +17,7 @@ from src.models.eve import (
     EveType,
     EveTypeMaterial,
 )
+from src.utils.config import Config
 from src.utils.jsonl_parser import JSONLParser
 
 logger = logging.getLogger(__name__)
@@ -29,13 +30,13 @@ class SDEJsonlLoader:
         """Initialize the loader with a base path to SDE data.
 
         Args:
-            base_path: Path to the SDE data directory. Defaults to 'data/sde/'
-                      relative to the project root.
+            base_path: Path to the SDE data directory. If None, uses Config.SDE_PATH
+                      which works correctly with PyInstaller and environment variables.
 
         """
         if base_path is None:
-            # Default to data/sde from project root
-            self.base_path = Path(__file__).parent.parent.parent.parent / "data" / "sde"
+            # Use config path (PyInstaller compatible)
+            self.base_path = Config.SDE_PATH
         else:
             self.base_path = Path(base_path)
 
