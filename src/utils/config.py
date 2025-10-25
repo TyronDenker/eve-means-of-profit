@@ -25,8 +25,8 @@ def get_base_path() -> Path:
         return Path(getattr(sys, "_MEIPASS", ""))
     else:
         # Running in development
-        # Go up from src/config.py to project root
-        return Path(__file__).parent.parent
+        # Go up from src/utils/config.py to project root
+        return Path(__file__).parent.parent.parent
 
 
 def get_data_path() -> Path:
