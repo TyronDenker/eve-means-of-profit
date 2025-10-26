@@ -38,8 +38,8 @@ class EveType(BaseModel):
         le=28_898,
         description="The ID of the graphic asset associated with the Eve type.",
     )
-    group_id: int = Field(
-        ...,
+    group_id: int | None = Field(
+        None,
         ge=0,
         le=368_726,
         description="The ID of the group to which the Eve type belongs.",

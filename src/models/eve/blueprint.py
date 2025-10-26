@@ -99,7 +99,7 @@ class ReactionSkill(EveBlueprintSkill):
 class InventionProduct(BaseModel):
     """Product for invention activity."""
 
-    probability: float = Field(..., ge=0.14, le=0.34)
+    probability: float | None = Field(None, ge=0.14, le=0.34)
     quantity: int = Field(..., ge=1, le=20)
     type_id: int = Field(..., ge=784, le=88003)
 
