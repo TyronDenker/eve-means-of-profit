@@ -54,11 +54,12 @@ class SDEManager:
 
         # Index hashmaps - for fast filtered queries
         # Format: dict[filter_value, list[object_id]]
-        self._types_by_group_index: dict[int, list[int]] | None = None
-        self._types_by_category_index: dict[int, list[int]] | None = None
-        self._types_by_market_group_index: dict[int, list[int]] | None = None
-        self._published_types_ids: set[int] | None = None
-        self._groups_by_category_index: dict[int, list[int]] | None = None
+        # These are always built when their corresponding cache is loaded
+        self._types_by_group_index: dict[int, list[int]] = {}
+        self._types_by_category_index: dict[int, list[int]] = {}
+        self._types_by_market_group_index: dict[int, list[int]] = {}
+        self._published_types_ids: set[int] = set()
+        self._groups_by_category_index: dict[int, list[int]] = {}
 
     def _load_types(self) -> dict[int, EveType]:
         """Load and cache all types."""
@@ -73,42 +74,49 @@ class SDEManager:
         """Build hashmap indices for fast type lookups.
 
         This builds O(1) lookup tables for common queries.
+        Ensures groups are loaded before building category index.
+        Must only be called after _types_cache is populated.
         """
-        if self._types_cache is None:
-            return
+        assert self._types_cache is not None, (
+            "Types cache must be loaded before building indices"
+        )
 
         logger.debug("Building type indices...")
 
-        # Index by group_id
-        self._types_by_group_index = defaultdict(list)
-        # Index by category_id (requires groups to be loaded)
-        self._types_by_category_index = defaultdict(list)
-        # Index by market_group_id
-        self._types_by_market_group_index = defaultdict(list)
-        # Set of published type IDs
-        self._published_types_ids = set()
+        # Ensure groups are loaded for category index
+        self._load_groups()
+        assert self._groups_cache is not None
 
-        # Build indices
+        # Clear and rebuild indices
+        groups_index: dict[int, list[int]] = defaultdict(list)
+        categories_index: dict[int, list[int]] = defaultdict(list)
+        market_groups_index: dict[int, list[int]] = defaultdict(list)
+        published_ids: set[int] = set()
+
+        # Build all indices in single pass
         for type_id, type_obj in self._types_cache.items():
             # Group index
-            self._types_by_group_index[type_obj.group_id].append(type_id)
+            if type_obj.group_id is not None:
+                groups_index[type_obj.group_id].append(type_id)
+
+                # Category index (requires group lookup)
+                group = self._groups_cache.get(type_obj.group_id)
+                if group:
+                    categories_index[group.category_id].append(type_id)
 
             # Market group index
             if type_obj.market_group_id is not None:
-                self._types_by_market_group_index[type_obj.market_group_id].append(
-                    type_id
-                )
+                market_groups_index[type_obj.market_group_id].append(type_id)
 
             # Published index
             if type_obj.published:
-                self._published_types_ids.add(type_id)
+                published_ids.add(type_id)
 
-        # Build category index (requires groups)
-        if self._groups_cache is not None:
-            for type_id, type_obj in self._types_cache.items():
-                group = self._groups_cache.get(type_obj.group_id)
-                if group:
-                    self._types_by_category_index[group.category_id].append(type_id)
+        # Assign built indices
+        self._types_by_group_index = dict(groups_index)
+        self._types_by_category_index = dict(categories_index)
+        self._types_by_market_group_index = dict(market_groups_index)
+        self._published_types_ids = published_ids
 
         logger.debug("Type indices built successfully")
 
@@ -140,17 +148,24 @@ class SDEManager:
         return self._groups_cache
 
     def _build_group_indices(self) -> None:
-        """Build hashmap indices for fast group lookups."""
-        if self._groups_cache is None:
-            return
+        """Build hashmap indices for fast group lookups.
+
+        Must only be called after _groups_cache is populated.
+        """
+        assert self._groups_cache is not None, (
+            "Groups cache must be loaded before building indices"
+        )
 
         logger.debug("Building group indices...")
 
-        # Index by category_id
-        self._groups_by_category_index = defaultdict(list)
+        # Clear and rebuild index
+        categories_index: dict[int, list[int]] = defaultdict(list)
 
         for group_id, group in self._groups_cache.items():
-            self._groups_by_category_index[group.category_id].append(group_id)
+            categories_index[group.category_id].append(group_id)
+
+        # Assign built index
+        self._groups_by_category_index = dict(categories_index)
 
         logger.debug("Group indices built successfully")
 
@@ -355,14 +370,8 @@ class SDEManager:
 
         """
         types_cache = self._load_types()
-
-        # Use index if available
-        if self._types_by_group_index is not None:
-            type_ids = self._types_by_group_index.get(group_id, [])
-            return [types_cache[tid] for tid in type_ids if tid in types_cache]
-
-        # Fallback to iteration (shouldn't happen if indices built correctly)
-        return [t for t in types_cache.values() if t.group_id == group_id]
+        type_ids = self._types_by_group_index.get(group_id, [])
+        return [types_cache[tid] for tid in type_ids]
 
     def get_types_by_category(self, category_id: int) -> list[EveType]:
         """Get all types belonging to a specific category.
@@ -376,21 +385,9 @@ class SDEManager:
             List of EveType objects in the category
 
         """
-        # Ensure groups are loaded for category resolution
-        self._load_groups()
         types_cache = self._load_types()
-
-        # Use index if available
-        if self._types_by_category_index is not None:
-            type_ids = self._types_by_category_index.get(category_id, [])
-            return [types_cache[tid] for tid in type_ids if tid in types_cache]
-
-        # Fallback to iteration through groups
-        groups = self._groups_cache or {}
-        category_group_ids = {
-            g.id for g in groups.values() if g.category_id == category_id
-        }
-        return [t for t in types_cache.values() if t.group_id in category_group_ids]
+        type_ids = self._types_by_category_index.get(category_id, [])
+        return [types_cache[tid] for tid in type_ids]
 
     def get_types_by_market_group(self, market_group_id: int) -> list[EveType]:
         """Get all types in a specific market group.
@@ -405,14 +402,8 @@ class SDEManager:
 
         """
         types_cache = self._load_types()
-
-        # Use index if available
-        if self._types_by_market_group_index is not None:
-            type_ids = self._types_by_market_group_index.get(market_group_id, [])
-            return [types_cache[tid] for tid in type_ids if tid in types_cache]
-
-        # Fallback to iteration
-        return [t for t in types_cache.values() if t.market_group_id == market_group_id]
+        type_ids = self._types_by_market_group_index.get(market_group_id, [])
+        return [types_cache[tid] for tid in type_ids]
 
     def get_published_types(self) -> list[EveType]:
         """Get all published types.
@@ -424,13 +415,7 @@ class SDEManager:
 
         """
         types_cache = self._load_types()
-
-        # Use index if available
-        if self._published_types_ids is not None:
-            return [types_cache[tid] for tid in self._published_types_ids]
-
-        # Fallback to iteration
-        return [t for t in types_cache.values() if t.published]
+        return [types_cache[tid] for tid in self._published_types_ids]
 
     def get_all_types(self) -> list[EveType]:
         """Get all types.
@@ -481,14 +466,8 @@ class SDEManager:
 
         """
         groups_cache = self._load_groups()
-
-        # Use index if available
-        if self._groups_by_category_index is not None:
-            group_ids = self._groups_by_category_index.get(category_id, [])
-            return [groups_cache[gid] for gid in group_ids if gid in groups_cache]
-
-        # Fallback to iteration
-        return [g for g in groups_cache.values() if g.category_id == category_id]
+        group_ids = self._groups_by_category_index.get(category_id, [])
+        return [groups_cache[gid] for gid in group_ids]
 
     def clear_cache(self) -> None:
         """Clear all cached data to free memory."""
@@ -506,12 +485,12 @@ class SDEManager:
         self._dogma_units_cache = None
         self._dogma_attr_categories_cache = None
 
-        # Clear index hashmaps
-        self._types_by_group_index = None
-        self._types_by_category_index = None
-        self._types_by_market_group_index = None
-        self._published_types_ids = None
-        self._groups_by_category_index = None
+        # Clear index hashmaps (reset to empty, not None)
+        self._types_by_group_index = {}
+        self._types_by_category_index = {}
+        self._types_by_market_group_index = {}
+        self._published_types_ids = set()
+        self._groups_by_category_index = {}
 
         logger.info("Cache cleared")
 
@@ -538,11 +517,11 @@ class SDEManager:
             ]
         )
 
-    def get_cache_stats(self) -> dict[str, int]:
+    def get_cache_stats(self) -> dict[str, int | bool]:
         """Get statistics about cached data.
 
         Returns:
-            Dictionary with cache sizes
+            Dictionary with cache sizes and index status
 
         """
         return {
@@ -570,5 +549,5 @@ class SDEManager:
                 if self._dogma_attr_categories_cache
                 else 0
             ),
-            "indices_built": self._types_by_group_index is not None,
+            "indices_built": len(self._types_by_group_index) > 0,
         }
