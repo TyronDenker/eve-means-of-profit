@@ -22,6 +22,72 @@ from src.utils.jsonl_parser import JSONLParser
 
 logger = logging.getLogger(__name__)
 
+# Mapping of SDE camelCase field names to snake_case model field names
+FIELD_NAME_MAP = {
+    # Special SDE key
+    "_key": "id",
+    # Type fields
+    "groupID": "group_id",
+    "basePrice": "base_price",
+    "factionID": "faction_id",
+    "graphicID": "graphic_id",
+    "iconID": "icon_id",
+    "marketGroupID": "market_group_id",
+    "metaGroupID": "meta_group_id",
+    "portionSize": "portion_size",
+    "raceID": "race_id",
+    "soundID": "sound_id",
+    "variationParentTypeID": "variation_parent_type_id",
+    # Blueprint fields
+    "blueprintTypeID": "blueprint_type_id",
+    "maxProductionLimit": "max_production_limit",
+    # Activity fields (used in materials, products, skills)
+    "typeID": "type_id",
+    "quantity": "quantity",
+    "probability": "probability",
+    "level": "level",
+    "time": "time",
+    # Activity names (already snake_case in SDE, but included for completeness)
+    "copying": "copying",
+    "manufacturing": "manufacturing",
+    "invention": "invention",
+    "reaction": "reaction",
+    "research_material": "research_material",
+    "research_time": "research_time",
+    "materials": "materials",
+    "products": "products",
+    "skills": "skills",
+    # Category fields
+    "categoryID": "category_id",
+    # Group fields
+    "anchorable": "anchorable",
+    "anchored": "anchored",
+    "fittableNonSingleton": "fittable_non_singleton",
+    "useBasePrice": "use_base_price",
+    # Dogma fields
+    "attributeID": "attribute_id",
+    "defaultValue": "default_value",
+    "displayName": "display_name",
+    "highIsGood": "high_is_good",
+    "stackable": "stackable",
+    "unitID": "unit_id",
+    "effectID": "effect_id",
+    "effectCategory": "effect_category",
+    "electronicChance": "electronic_chance",
+    "isAssistance": "is_assistance",
+    "isOffensive": "is_offensive",
+    "isWarpSafe": "is_warp_safe",
+    "dischargeAttributeID": "discharge_attribute_id",
+    "durationAttributeID": "duration_attribute_id",
+    "rangeAttributeID": "range_attribute_id",
+    "falloffAttributeID": "falloff_attribute_id",
+    "trackingSpeedAttributeID": "tracking_speed_attribute_id",
+    "fittingUsageChanceAttributeID": "fitting_usage_chance_attribute_id",
+    "displayNameID": "display_name_id",
+    # Material fields
+    "materialTypeID": "material_type_id",
+}
+
 
 class SDEJsonlLoader:
     """Loader for SDE JSONL files with lazy loading capabilities."""
@@ -61,23 +127,37 @@ class SDEJsonlLoader:
         yield from parser.parse()
 
     def _map_keys(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Map SDE keys to model field names.
+        """Map SDE keys to model field names recursively.
 
-        The SDE uses '_key' and camelCase for most fields.
-        Pydantic models use 'id' and snake_case with aliases.
+        Handles:
+        - Converting SDE keys to our domain keys using FIELD_NAME_MAP
+        - Recursively processing nested dicts and lists
 
         Args:
             data: Raw dictionary from JSONL
 
         Returns:
-            Dictionary with mapped keys
+            Dictionary with snake_case keys (recursively applied)
 
         """
-        # Map _key to id
-        if "_key" in data:
-            data["id"] = data["_key"]
+        out: dict[str, Any] = {}
 
-        return data
+        for k, v in data.items():
+            # Map key using the field name mapping, fall back to original if not found
+            mapped_key: str = FIELD_NAME_MAP.get(k, k)
+
+            # Recursively process nested structures
+            if isinstance(v, dict):
+                out[mapped_key] = self._map_keys(v)  # type: ignore[list-item]
+            elif isinstance(v, list):
+                out[mapped_key] = [
+                    self._map_keys(item) if isinstance(item, dict) else item  # type: ignore[list-item]
+                    for item in v  # type: ignore[list-item]
+                ]
+            else:
+                out[mapped_key] = v
+
+        return out
 
     def load_types(self) -> Iterator[EveType]:
         """Load all EVE types from types.jsonl.
