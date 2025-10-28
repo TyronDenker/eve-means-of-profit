@@ -7,6 +7,12 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QVariant
 from src.models.eve import EveType
 from src.utils import format_currency, format_mass, format_number, format_volume
 
+# Optional import for market data manager
+try:
+    from src.data.managers import MarketDataManager
+except ImportError:
+    MarketDataManager = None  # type: ignore
+
 
 class TypesTableModel(QAbstractTableModel):
     """Table model for displaying EVE types."""
@@ -18,18 +24,29 @@ class TypesTableModel(QAbstractTableModel):
         ("Volume", "volume"),
         ("Mass", "mass"),
         ("Base Price", "base_price"),
+        ("Jita Sell", "market_sell"),
+        ("Jita Buy", "market_buy"),
         ("Published", "published"),
     ]
 
-    def __init__(self, types: list[EveType] | None = None):
+    def __init__(
+        self,
+        types: list[EveType] | None = None,
+        market_manager: Any | None = None,
+        region_id: int = 10000002,
+    ):
         """Initialize the model.
 
         Args:
             types: List of EveType objects to display
+            market_manager: Optional MarketDataManager for price data
+            region_id: Region ID for market prices (default: The Forge)
 
         """
         super().__init__()
         self._types = types or []
+        self._market_manager = market_manager
+        self._region_id = region_id
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
         """Return the number of rows."""
@@ -60,6 +77,12 @@ class TypesTableModel(QAbstractTableModel):
         eve_type = self._types[row]
         _, attr_name = self.COLUMNS[col]
 
+        # Handle market price columns separately
+        if attr_name == "market_sell":
+            return self._get_market_price(eve_type.id, is_buy_order=False)
+        elif attr_name == "market_buy":
+            return self._get_market_price(eve_type.id, is_buy_order=True)
+
         value = getattr(eve_type, attr_name, None)
 
         # Special formatting for specific columns
@@ -77,6 +100,28 @@ class TypesTableModel(QAbstractTableModel):
             return "N/A"
         else:
             return str(value)
+
+    def _get_market_price(self, type_id: int, is_buy_order: bool) -> str:
+        """Get formatted market price for a type.
+
+        Args:
+            type_id: Type ID to look up
+            is_buy_order: True for buy orders, False for sell orders
+
+        Returns:
+            Formatted price string or "N/A"
+
+        """
+        if self._market_manager is None:
+            return "N/A"
+
+        price = self._market_manager.get_price(type_id, self._region_id, is_buy_order)
+        if price is None:
+            return "N/A"
+
+        # Use best price (lowest sell, highest buy)
+        best = price.get_best_price()
+        return format_currency(best, include_isk=False)
 
     def headerData(  # noqa: N802
         self,
@@ -104,6 +149,34 @@ class TypesTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._types = types
         self.endResetModel()
+
+    def set_market_manager(self, market_manager: Any) -> None:
+        """Set the market manager and refresh display.
+
+        Args:
+            market_manager: MarketDataManager instance
+
+        """
+        self._market_manager = market_manager
+        # Refresh the market price columns
+        if len(self._types) > 0:
+            top_left = self.index(0, 6)  # market_sell column
+            bottom_right = self.index(len(self._types) - 1, 7)  # market_buy
+            self.dataChanged.emit(top_left, bottom_right)
+
+    def set_region(self, region_id: int) -> None:
+        """Set the region for market prices and refresh.
+
+        Args:
+            region_id: New region ID
+
+        """
+        self._region_id = region_id
+        # Refresh the market price columns
+        if len(self._types) > 0:
+            top_left = self.index(0, 6)  # market_sell column
+            bottom_right = self.index(len(self._types) - 1, 7)  # market_buy
+            self.dataChanged.emit(top_left, bottom_right)
 
     def get_type_at_row(self, row: int) -> EveType | None:
         """Get the EveType object at a specific row.
