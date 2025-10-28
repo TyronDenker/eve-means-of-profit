@@ -10,6 +10,7 @@ from .dogma import (
 )
 from .group import EveGroup
 from .market_group import EveMarketGroup
+from .market_price import MarketPrice
 from .text import EveLocalizedText, EveLocalizedTextRequired
 from .type import EveType
 from .type_material import EveTypeMaterial
@@ -27,4 +28,5 @@ __all__ = [
     "EveMarketGroup",
     "EveType",
     "EveTypeMaterial",
+    "MarketPrice",
 ]
