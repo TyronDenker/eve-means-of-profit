@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.core import BlueprintService
 from src.data.managers import SDEManager
 from src.models.eve import EveBlueprint
 from src.models.ui import BlueprintTableModel
@@ -24,16 +25,23 @@ logger = logging.getLogger(__name__)
 class BlueprintViewer(QWidget):
     """Widget for viewing blueprint details and activities."""
 
-    def __init__(self, sde_manager: SDEManager, parent=None):
+    def __init__(
+        self,
+        sde_manager: SDEManager,
+        blueprint_service: BlueprintService | None = None,
+        parent=None,
+    ):
         """Initialize the blueprint viewer.
 
         Args:
             sde_manager: SDEManager instance for data access
+            blueprint_service: BlueprintService for calculations
             parent: Parent widget
 
         """
         super().__init__(parent)
         self._sde_manager = sde_manager
+        self._blueprint_service = blueprint_service
         self._current_blueprint: EveBlueprint | None = None
         self._setup_ui()
         self._load_blueprints()

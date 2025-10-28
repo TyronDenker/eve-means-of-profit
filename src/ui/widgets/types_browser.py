@@ -15,11 +15,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.core import MarketService, PriceAnalyzer
 from src.data.managers import SDEManager
 from src.models.eve import EveType
 from src.models.ui import TypesTableModel
 from src.ui.widgets.filter_panel import FilterPanel
+from src.ui.widgets.market_panel import MarketPricePanel
 from src.ui.widgets.search_bar import SearchBar
+from src.utils.formatting import format_currency
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +30,29 @@ logger = logging.getLogger(__name__)
 class TypesBrowser(QWidget):
     """Widget for browsing and searching EVE types."""
 
-    def __init__(self, sde_manager: SDEManager, parent=None):
+    # Common region IDs (Jita, Amarr, Dodixie, Rens, Hek)
+    DEFAULT_REGION_ID = 10000002  # The Forge (Jita)
+
+    def __init__(
+        self,
+        sde_manager: SDEManager,
+        market_service: MarketService | None = None,
+        price_analyzer: PriceAnalyzer | None = None,
+        parent=None,
+    ):
         """Initialize the types browser.
 
         Args:
             sde_manager: SDEManager instance for data access
+            market_service: MarketService for market operations
+            price_analyzer: PriceAnalyzer for price analysis
             parent: Parent widget
 
         """
         super().__init__(parent)
         self._sde_manager = sde_manager
+        self._market_service = market_service
+        self._price_analyzer = price_analyzer
         self._all_types: list[EveType] = []
         self._filtered_types: list[EveType] = []
         self._setup_ui()
@@ -59,22 +75,29 @@ class TypesBrowser(QWidget):
 
         main_layout.addLayout(header_layout)
 
-        # Create splitter for filter panel and main content
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Create main splitter for three panels
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left side: Filter panel
         self._filter_panel = FilterPanel()
         self._filter_panel.filters_changed.connect(self._on_filters_changed)
         self._filter_panel.setMaximumWidth(300)
-        splitter.addWidget(self._filter_panel)
+        main_splitter.addWidget(self._filter_panel)
 
-        # Right side: Table and details
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
+        # Middle: Table and details
+        middle_widget = QWidget()
+        middle_layout = QVBoxLayout(middle_widget)
 
         # Table view
         self._table_view = QTableView()
-        self._table_model = TypesTableModel()
+        # Note: TypesTableModel still needs MarketDataManager for now
+        # TODO: Refactor TypesTableModel to use services
+        self._table_model = TypesTableModel(
+            market_manager=self._market_service._market_manager
+            if self._market_service
+            else None,
+            region_id=self.DEFAULT_REGION_ID,
+        )
         self._table_view.setModel(self._table_model)
         self._table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table_view.setAlternatingRowColors(True)
@@ -82,28 +105,45 @@ class TypesBrowser(QWidget):
 
         # Auto-resize columns
         header = self._table_view.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)
+        if header:
+            header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            header.setStretchLastSection(True)
 
-        self._table_view.selectionModel().selectionChanged.connect(
-            self._on_selection_changed
-        )
+        selection_model = self._table_view.selectionModel()
+        if selection_model:
+            selection_model.selectionChanged.connect(self._on_selection_changed)
 
-        right_layout.addWidget(self._table_view)
+        middle_layout.addWidget(self._table_view)
 
-        # Details panel
-        details_label = QLabel("<b>Details:</b>")
-        right_layout.addWidget(details_label)
+        # Details panel (below table)
+        details_label = QLabel("<b>Basic Details:</b>")
+        middle_layout.addWidget(details_label)
 
         self._details_text = QTextEdit()
         self._details_text.setReadOnly(True)
-        self._details_text.setMaximumHeight(150)
-        right_layout.addWidget(self._details_text)
+        self._details_text.setMaximumHeight(120)
+        middle_layout.addWidget(self._details_text)
 
-        splitter.addWidget(right_widget)
-        splitter.setSizes([250, 750])
+        main_splitter.addWidget(middle_widget)
 
-        main_layout.addWidget(splitter)
+        # Right side: Market price panel (pass services)
+        if self._market_service is not None:
+            self._market_panel = MarketPricePanel(
+                market_service=self._market_service,
+                price_analyzer=self._price_analyzer,
+            )
+            self._market_panel.setMaximumWidth(350)
+            main_splitter.addWidget(self._market_panel)
+        else:
+            self._market_panel = None
+
+        # Set initial splitter sizes
+        if self._market_panel:
+            main_splitter.setSizes([250, 600, 350])
+        else:
+            main_splitter.setSizes([250, 950])
+
+        main_layout.addWidget(main_splitter)
 
         # Status bar
         status_layout = QHBoxLayout()
@@ -205,15 +245,24 @@ class TypesBrowser(QWidget):
 
     def _on_selection_changed(self) -> None:
         """Handle table selection changes."""
-        selection = self._table_view.selectionModel().selectedRows()
+        selection_model = self._table_view.selectionModel()
+        if not selection_model:
+            return
+
+        selection = selection_model.selectedRows()
         if not selection:
             self._details_text.clear()
+            if self._market_panel:
+                self._market_panel.set_type_id(None)
             return
 
         row = selection[0].row()
         eve_type = self._table_model.get_type_at_row(row)
         if eve_type:
             self._show_type_details(eve_type)
+            # Update market panel with selected type
+            if self._market_panel:
+                self._market_panel.set_type_id(eve_type.id)
 
     def _show_type_details(self, eve_type: EveType) -> None:
         """Show detailed information about a type.
@@ -243,7 +292,7 @@ class TypesBrowser(QWidget):
             details.append(f"<b>Market Group ID:</b> {eve_type.market_group_id}")
 
         if eve_type.base_price is not None:
-            details.append(f"<b>Base Price:</b> {eve_type.base_price:,.2f} ISK")
+            details.append(f"<b>Base Price:</b> {format_currency(eve_type.base_price)}")
 
         if eve_type.volume is not None:
             details.append(f"<b>Volume:</b> {eve_type.volume:,.2f} m³")
