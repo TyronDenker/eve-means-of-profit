@@ -4,6 +4,12 @@ import logging
 
 from PyQt6.QtWidgets import QMainWindow, QTabWidget
 
+from src.core import (
+    BlueprintService,
+    MarketService,
+    PriceAnalyzer,
+    TypeService,
+)
 from src.data.managers import SDEManager
 from src.ui.widgets import BlueprintViewer, TypesBrowser
 
@@ -13,15 +19,30 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    def __init__(self, sde_manager: SDEManager):
+    def __init__(
+        self,
+        sde_manager: SDEManager,
+        market_service: MarketService | None = None,
+        price_analyzer: PriceAnalyzer | None = None,
+        type_service: TypeService | None = None,
+        blueprint_service: BlueprintService | None = None,
+    ):
         """Initialize the main window.
 
         Args:
             sde_manager: SDEManager instance for data access
+            market_service: MarketService for market operations
+            price_analyzer: PriceAnalyzer for price analysis
+            type_service: TypeService for type operations
+            blueprint_service: BlueprintService for blueprint calculations
 
         """
         super().__init__()
         self._sde_manager = sde_manager
+        self._market_service = market_service
+        self._price_analyzer = price_analyzer
+        self._type_service = type_service
+        self._blueprint_service = blueprint_service
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -32,17 +53,26 @@ class MainWindow(QMainWindow):
         # Create tab widget
         tabs = QTabWidget()
 
-        # Types browser tab
-        types_browser = TypesBrowser(self._sde_manager)
+        # Types browser tab (pass services)
+        types_browser = TypesBrowser(
+            sde_manager=self._sde_manager,
+            market_service=self._market_service,
+            price_analyzer=self._price_analyzer,
+        )
         tabs.addTab(types_browser, "Types Browser")
 
-        # Blueprint viewer tab
-        blueprint_viewer = BlueprintViewer(self._sde_manager)
+        # Blueprint viewer tab (pass services)
+        blueprint_viewer = BlueprintViewer(
+            sde_manager=self._sde_manager,
+            blueprint_service=self._blueprint_service,
+        )
         tabs.addTab(blueprint_viewer, "Blueprint Viewer")
 
         self.setCentralWidget(tabs)
 
         # Status bar
-        self.statusBar().showMessage("Ready")
+        status_bar = self.statusBar()
+        if status_bar:
+            status_bar.showMessage("Ready")
 
         logger.info("Main window initialized")
