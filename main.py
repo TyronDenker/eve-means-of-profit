@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QApplication
 
 from src.core import (
     BlueprintService,
+    ManufacturingService,
     MarketService,
     PriceAnalyzer,
     TypeService,
@@ -49,6 +50,9 @@ class EVEProfitApp:
         self._blueprint_service = BlueprintService(
             self._sde_manager, self._market_manager
         )
+        self._manufacturing_service = ManufacturingService(
+            self._sde_manager, self._market_manager
+        )
 
         # Create main window with services
         logger.info("Creating main window...")
@@ -58,6 +62,7 @@ class EVEProfitApp:
             price_analyzer=self._price_analyzer,
             type_service=self._type_service,
             blueprint_service=self._blueprint_service,
+            manufacturing_service=self._manufacturing_service,
         )
 
     def run(self) -> int:
