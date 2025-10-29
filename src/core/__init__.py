@@ -6,12 +6,14 @@ and focus on business rules and calculations.
 """
 
 from .blueprint_service import BlueprintService
+from .manufacturing_service import ManufacturingService
 from .market_service import MarketService
 from .price_analyzer import PriceAnalyzer
 from .type_service import TypeService
 
 __all__ = [
     "BlueprintService",
+    "ManufacturingService",
     "MarketService",
     "PriceAnalyzer",
     "TypeService",
