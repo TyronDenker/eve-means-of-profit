@@ -6,12 +6,13 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget
 
 from src.core import (
     BlueprintService,
+    ManufacturingService,
     MarketService,
     PriceAnalyzer,
     TypeService,
 )
 from src.data.managers import SDEManager
-from src.ui.widgets import BlueprintViewer, TypesBrowser
+from src.ui.widgets import ManufacturingWindow, TypesBrowser
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class MainWindow(QMainWindow):
         price_analyzer: PriceAnalyzer | None = None,
         type_service: TypeService | None = None,
         blueprint_service: BlueprintService | None = None,
+        manufacturing_service: ManufacturingService | None = None,
     ):
         """Initialize the main window.
 
@@ -35,6 +37,7 @@ class MainWindow(QMainWindow):
             price_analyzer: PriceAnalyzer for price analysis
             type_service: TypeService for type operations
             blueprint_service: BlueprintService for blueprint calculations
+            manufacturing_service: ManufacturingService for manufacturing
 
         """
         super().__init__()
@@ -43,6 +46,7 @@ class MainWindow(QMainWindow):
         self._price_analyzer = price_analyzer
         self._type_service = type_service
         self._blueprint_service = blueprint_service
+        self._manufacturing_service = manufacturing_service
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -61,12 +65,13 @@ class MainWindow(QMainWindow):
         )
         tabs.addTab(types_browser, "Types Browser")
 
-        # Blueprint viewer tab (pass services)
-        blueprint_viewer = BlueprintViewer(
-            sde_manager=self._sde_manager,
-            blueprint_service=self._blueprint_service,
-        )
-        tabs.addTab(blueprint_viewer, "Blueprint Viewer")
+        # Manufacturing calculator tab (pass services)
+        if self._manufacturing_service:
+            manufacturing_widget = ManufacturingWindow(
+                sde_manager=self._sde_manager,
+                manufacturing_service=self._manufacturing_service,
+            )
+            tabs.addTab(manufacturing_widget, "Manufacturing Calculator")
 
         self.setCentralWidget(tabs)
 
