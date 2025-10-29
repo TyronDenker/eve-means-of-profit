@@ -18,14 +18,14 @@ class MarketDataManager:
     - Price retrieval methods for buy/sell orders
     """
 
-    def __init__(self, loader: FuzzworkCSVLoader | None = None):
+    def __init__(self, loader: FuzzworkCSVLoader):
         """Initialize the market data manager.
 
         Args:
-            loader: FuzzworkCSVLoader instance. If None, creates default.
+            loader: FuzzworkCSVLoader instance for loading market data.
 
         """
-        self._loader = loader or FuzzworkCSVLoader()
+        self._loader = loader
 
         # Primary cache - all market prices by composite key
         # Key format: (type_id, region_id, is_buy_order)

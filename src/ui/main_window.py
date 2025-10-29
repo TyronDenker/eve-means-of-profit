@@ -11,7 +11,7 @@ from src.core import (
     PriceAnalyzer,
     TypeService,
 )
-from src.data.managers import SDEManager
+from src.data.managers import MarketDataManager, SDEManager
 from src.ui.widgets import ManufacturingWindow, TypesBrowser
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         sde_manager: SDEManager,
+        market_manager: "MarketDataManager | None" = None,
         market_service: MarketService | None = None,
         price_analyzer: PriceAnalyzer | None = None,
         type_service: TypeService | None = None,
@@ -33,6 +34,7 @@ class MainWindow(QMainWindow):
 
         Args:
             sde_manager: SDEManager instance for data access
+            market_manager: MarketDataManager for price data
             market_service: MarketService for market operations
             price_analyzer: PriceAnalyzer for price analysis
             type_service: TypeService for type operations
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
         self._sde_manager = sde_manager
+        self._market_manager = market_manager
         self._market_service = market_service
         self._price_analyzer = price_analyzer
         self._type_service = type_service
@@ -60,6 +63,7 @@ class MainWindow(QMainWindow):
         # Types browser tab (pass services)
         types_browser = TypesBrowser(
             sde_manager=self._sde_manager,
+            market_manager=self._market_manager,
             market_service=self._market_service,
             price_analyzer=self._price_analyzer,
         )

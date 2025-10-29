@@ -29,14 +29,14 @@ class SDEManager:
     - Memory management: Clear caches when needed
     """
 
-    def __init__(self, loader: SDEJsonlLoader | None = None):
+    def __init__(self, loader: SDEJsonlLoader):
         """Initialize the SDE manager.
 
         Args:
-            loader: SDEJsonlLoader instance. If None, creates default loader.
+            loader: SDEJsonlLoader instance for loading SDE data.
 
         """
-        self._loader = loader or SDEJsonlLoader()
+        self._loader = loader
 
         # Primary caches - ID-based lookups (dict[id, object])
         self._types_cache: dict[int, EveType] | None = None

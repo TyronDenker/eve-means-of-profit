@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.core import MarketService, PriceAnalyzer
-from src.data.managers import SDEManager
+from src.data.managers import MarketDataManager, SDEManager
 from src.models.eve import EveType
 from src.models.ui import TypesTableModel
 from src.ui.widgets.filter_panel import FilterPanel
@@ -36,6 +36,7 @@ class TypesBrowser(QWidget):
     def __init__(
         self,
         sde_manager: SDEManager,
+        market_manager: "MarketDataManager | None" = None,
         market_service: MarketService | None = None,
         price_analyzer: PriceAnalyzer | None = None,
         parent=None,
@@ -44,6 +45,7 @@ class TypesBrowser(QWidget):
 
         Args:
             sde_manager: SDEManager instance for data access
+            market_manager: MarketDataManager for price data (for table model)
             market_service: MarketService for market operations
             price_analyzer: PriceAnalyzer for price analysis
             parent: Parent widget
@@ -51,6 +53,7 @@ class TypesBrowser(QWidget):
         """
         super().__init__(parent)
         self._sde_manager = sde_manager
+        self._market_manager = market_manager
         self._market_service = market_service
         self._price_analyzer = price_analyzer
         self._all_types: list[EveType] = []
@@ -90,12 +93,8 @@ class TypesBrowser(QWidget):
 
         # Table view
         self._table_view = QTableView()
-        # Note: TypesTableModel still needs MarketDataManager for now
-        # TODO: Refactor TypesTableModel to use services
         self._table_model = TypesTableModel(
-            market_manager=self._market_service._market_manager
-            if self._market_service
-            else None,
+            market_manager=self._market_manager,
             region_id=self.DEFAULT_REGION_ID,
         )
         self._table_view.setModel(self._table_model)

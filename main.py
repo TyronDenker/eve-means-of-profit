@@ -12,6 +12,8 @@ from src.core import (
     PriceAnalyzer,
     TypeService,
 )
+from src.data.loaders.fuzzwork_csv import FuzzworkCSVLoader
+from src.data.loaders.sde_jsonl import SDEJsonlLoader
 from src.data.managers import MarketDataManager, SDEManager
 from src.ui.main_window import MainWindow
 
@@ -34,15 +36,23 @@ class EVEProfitApp:
         self._app.setApplicationName("EVE Means of Profit")
         self._app.setOrganizationName("EVE Tools")
 
-        # Create SDE manager
-        logger.info("Initializing SDE Manager...")
-        self._sde_manager = SDEManager()
+        # ============================================================
+        # Dependency Injection - Layer 1: Data Loaders
+        # ============================================================
+        logger.info("Initializing data loaders...")
+        self._sde_loader = SDEJsonlLoader()
+        self._market_loader = FuzzworkCSVLoader()
 
-        # Create market data manager
-        logger.info("Initializing Market Data Manager...")
-        self._market_manager = MarketDataManager()
+        # ============================================================
+        # Dependency Injection - Layer 2: Data Managers
+        # ============================================================
+        logger.info("Initializing data managers...")
+        self._sde_manager = SDEManager(loader=self._sde_loader)
+        self._market_manager = MarketDataManager(loader=self._market_loader)
 
-        # Create core services
+        # ============================================================
+        # Dependency Injection - Layer 3: Core Services
+        # ============================================================
         logger.info("Initializing core services...")
         self._market_service = MarketService(self._market_manager)
         self._price_analyzer = PriceAnalyzer(self._market_manager)
@@ -54,10 +64,13 @@ class EVEProfitApp:
             self._sde_manager, self._market_manager
         )
 
-        # Create main window with services
+        # ============================================================
+        # Dependency Injection - Layer 4: UI Components
+        # ============================================================
         logger.info("Creating main window...")
         self._main_window = MainWindow(
             sde_manager=self._sde_manager,
+            market_manager=self._market_manager,
             market_service=self._market_service,
             price_analyzer=self._price_analyzer,
             type_service=self._type_service,
