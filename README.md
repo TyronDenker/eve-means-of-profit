@@ -40,7 +40,7 @@ This project is being rapidly developed to get a working minimum viable product.
 
 - **Business logic may have shortcuts** – Some calculations are approximations or use hardcoded defaults
 - **Design patterns vary** – Some corners might have been cut, which should be avoided and rapidly fixed in future iterations.
-- **No test coverage** – Tests are planned but not yet implemented, should be done ASAP.
+- **Test coverage is growing** – See [TESTING_GUIDE.md](TESTING_GUIDE.md) for how to write tests.
 - **Data validation is minimal** – Input sanitization and error handling need improvement.
 - **Performance not optimized** – Caching and query optimization are functional but not tuned.
 
@@ -56,7 +56,7 @@ src/
 
 ```
 
-See [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) for detailed architecture documentation.
+See [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) for detailed architecture documentation and [TESTING_GUIDE.md](TESTING_GUIDE.md) for testing guidelines.
 
 ## Contributing
 
@@ -71,12 +71,18 @@ This is an open-source project. Contributions are welcome!
 
 ### Areas Needing Help
 
-- Test coverage (pytest, unittest)
+- Test coverage (see [TESTING_GUIDE.md](TESTING_GUIDE.md))
 - API integration with ESI, SDE and 3rd party services (Fuzzwork, EVE Ref)
 - UI/UX improvements
 - Refactoring and code quality enhancements
 - Feature implementations
 - Documentation
+
+### Documentation
+
+- [README.md](README.md) - Project overview and quick start
+- [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) - Architecture and development guidelines
+- [TESTING_GUIDE.md](TESTING_GUIDE.md) - **New!** How to write tests for this project
 
 ## Data Sources
 
