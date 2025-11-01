@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from src.utils.jsonl_parser import JSONLParser
+from utils.jsonl_parser import JSONLParser
 
 # ============================================================================
 # FIXTURES - Test Data Generation
