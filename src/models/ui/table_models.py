@@ -48,14 +48,18 @@ class TypesTableModel(QAbstractTableModel):
         self._market_manager = market_manager
         self._region_id = region_id
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         """Return the number of rows."""
+        if parent is None:
+            parent = QModelIndex()
         if parent.isValid():
             return 0
         return len(self._types)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         """Return the number of columns."""
+        if parent is None:
+            parent = QModelIndex()
         if parent.isValid():
             return 0
         return len(self.COLUMNS)
@@ -80,7 +84,7 @@ class TypesTableModel(QAbstractTableModel):
         # Handle market price columns separately
         if attr_name == "market_sell":
             return self._get_market_price(eve_type.id, is_buy_order=False)
-        elif attr_name == "market_buy":
+        if attr_name == "market_buy":
             return self._get_market_price(eve_type.id, is_buy_order=True)
 
         value = getattr(eve_type, attr_name, None)
@@ -88,18 +92,17 @@ class TypesTableModel(QAbstractTableModel):
         # Special formatting for specific columns
         if attr_name == "name" and value is not None and hasattr(value, "en"):
             return value.en
-        elif attr_name == "volume":
+        if attr_name == "volume":
             return format_volume(value)
-        elif attr_name == "mass":
+        if attr_name == "mass":
             return format_mass(value)
-        elif attr_name == "base_price":
+        if attr_name == "base_price":
             return format_currency(value)
-        elif attr_name == "published":
+        if attr_name == "published":
             return "Yes" if value else "No"
-        elif value is None:
+        if value is None:
             return "N/A"
-        else:
-            return str(value)
+        return str(value)
 
     def _get_market_price(self, type_id: int, is_buy_order: bool) -> str:
         """Get formatted market price for a type.
@@ -218,14 +221,18 @@ class BlueprintTableModel(QAbstractTableModel):
         self._materials = materials or []
         self._type_names = type_names or {}
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         """Return the number of rows."""
+        if parent is None:
+            parent = QModelIndex()
         if parent.isValid():
             return 0
         return len(self._materials)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         """Return the number of columns."""
+        if parent is None:
+            parent = QModelIndex()
         if parent.isValid():
             return 0
         return len(self.COLUMNS)
@@ -252,12 +259,11 @@ class BlueprintTableModel(QAbstractTableModel):
             if type_id is not None:
                 return self._type_names.get(type_id, "Unknown")
             return "Unknown"
-        elif attr_name == "quantity":
+        if attr_name == "quantity":
             value = getattr(material, attr_name, None)
             return format_number(value) if value is not None else "N/A"
-        else:
-            value = getattr(material, attr_name, None)
-            return str(value) if value is not None else "N/A"
+        value = getattr(material, attr_name, None)
+        return str(value) if value is not None else "N/A"
 
     def headerData(  # noqa: N802
         self,
