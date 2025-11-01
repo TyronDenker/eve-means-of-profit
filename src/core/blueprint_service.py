@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 from src.data.managers import MarketDataManager, SDEManager
-from src.models.eve import EveBlueprint
 
 logger = logging.getLogger(__name__)
 

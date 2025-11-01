@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 from src.data.managers import MarketDataManager
-from src.models.eve import MarketPrice
 
 logger = logging.getLogger(__name__)
 
