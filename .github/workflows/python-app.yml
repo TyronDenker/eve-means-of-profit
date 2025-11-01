@@ -34,11 +34,11 @@ jobs:
         run: uv sync
       
       - name: Run Ruff linter
-        run: uvx ruff check . --output-format=github
+        run: uv run ruff check . --output-format=github
         continue-on-error: true
       
       - name: Run Ruff formatter check
-        run: uvx ruff format --check .
+        run: uv run ruff format --check .
         continue-on-error: true
 
   type-check:
@@ -59,7 +59,7 @@ jobs:
         run: uv sync
       
       - name: Run ty type checker
-        run: uvx ty check src/
+        run: uv run ty check src/
         continue-on-error: true
 
   test:
@@ -80,7 +80,7 @@ jobs:
         run: uv sync
       
       - name: Run tests with coverage
-        run: uvx pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html #--cov-fail-under=60
+        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html #--cov-fail-under=60
       
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
