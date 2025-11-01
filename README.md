@@ -1,9 +1,10 @@
 # EVE Means of Profit
 
-[![CI](https://github.com/TyronDenker/eve-means-of-profit/workflows/CI/badge.svg)](https://github.com/TyronDenker/eve-means-of-profit/actions/workflows/python-app.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/TyronDenker/eve-means-of-profit/python-app.yml?branch=main&label=CI&logo=github&style=flat)](https://github.com/TyronDenker/eve-means-of-profit/actions/workflows/python-app.yml)
+[![Coverage](https://img.shields.io/codecov/c/github/TyronDenker/eve-means-of-profit/main?label=coverage&logo=codecov&style=flat)](https://codecov.io/gh/TyronDenker/eve-means-of-profit)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![ty](https://img.shields.io/badge/type_checker-ty-blue.svg)](https://github.com/astral-sh/ty)
+[![ty](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ty/main/assets/badge/v0.json)](https://github.com/astral-sh/ty)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 A fully featured EVE Online tool for asset tracking, manufacturing and trading analysis, currently in active MVP development.
