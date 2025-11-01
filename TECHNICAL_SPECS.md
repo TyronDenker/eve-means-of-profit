@@ -1,6 +1,18 @@
 # Technical Specifications
 
-This document provides technical context for developers working on **EVE Means of Profit**.
+Architecture and system design documentation for **EVE Means of Profit**.
+
+> **For development guidelines, testing, and workflow**, see [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Table of Contents
+
+- [System Architecture](#system-architecture)
+- [Module Responsibilities](#module-responsibilities)
+- [Data Flow](#data-flow)
+- [Design Principles](#design-principles)
+- [Known Technical Debt](#known-technical-debt)
+
+---
 
 ## System Architecture
 
@@ -94,65 +106,78 @@ UI Layer (src/ui/)
 
 ---
 
-## Development Guidelines
-
-### Adding a New Service
-
-1. Create service class in `src/core/`
-2. Inject `SDEManager` and/or `MarketDataManager` in `__init__`
-3. Define public methods with typed return values (use `TypedDict` for complex returns)
-4. Register service in `main.py` and pass to UI components
-
-### Adding a New EVE Data Model
-
-1. Create Pydantic model in `src/models/eve/`
-2. Add loader method in `src/data/loaders/sde_jsonl.py`
-3. Add cache in `SDEManager` (`src/data/managers/sde.py`)
-4. Add public query methods in `SDEManager`
-
-### Working with SDE Data
-
-- **SDE files**: `data/sde/*.jsonl` (one JSON object per line)
-- **Schema**: Follows CCP's SDE YAML structure (converted to JSON)
-- **Lazy loading**: Use `SDEManager` methods, don't load files directly
-- **Indices**: `SDEManager` builds O(1) lookup hashmaps (e.g., types by group)
-
-### Database Interactions
-
-- Use `src/data/repositories/sqlite_manager.py` for SQLite queries
-- Currently underutilized (most data is in-memory)
-- Future: Persist user configurations, cached market data
-
----
-
-## Onboarding Checklist
-
-- [ ] Install Python 3.13+
-- [ ] Install `uv` package manager
-- [ ] Clone repository and run `uv sync`
-- [ ] Run `uv run -m main` to verify setup
-- [ ] Read `README.md` for project overview
-- [ ] Review `src/data/` to understand data access patterns
-- [ ] Review `src/core/` to see business logic
-- [ ] Explore `src/models/eve/` to understand EVE domain models
-- [ ] Experiment with UI (Types Browser, Manufacturing Calculator)
-- [ ] Identify an issue or feature to work on
-
----
-
 ## Design Principles
 
 1. **Pragmatic MVP**: Speed over perfection, but keep debt visible
 2. **Separation of Concerns**: Data → Models → Services → UI
-3. **Type Safety**: Use Pydantic, type hints, and `TypedDict` where possible
+3. **Type Safety**: Use Pydantic, type hints, and `TypedDict`
 4. **Lazy + Cached**: Load data on demand, cache in memory
 5. **Open for Extension**: Easy to add new services, models, UI widgets
-6. **Honest Communication**: Document shortcuts, acknowledge missing tests
+
+---
+
+## Known Technical Debt
+
+### Missing Features
+
+- **ESI Integration**: Not yet implemented (SCI hardcoded, no real-time data)
+- **Database Usage**: SQLite barely used (most data in-memory)
+- **Error Handling**: Minimal validation, needs improvement
+- **Performance**: No optimization, caching is naive
+- **Testing**: Low coverage outside critical paths
+- **UI Polish**: Basic widgets, needs UX improvements
+
+### Approximations & Shortcuts
+
+- Manufacturing costs use Estimated Item Value (EIV) approximations
+- System Cost Index (SCI) is manually configured, not fetched
+- Alpha clone tax logic may not match in-game exactly
+- Market data is static CSV, not real-time
+- No blueprint research time calculations
+
+### Future Improvements
+
+- Integrate ESI API for real-time data
+- Add database persistence for user configs and cache
+- Improve error messages and input validation
+- Add comprehensive logging
+- Implement proper caching strategy (Redis/memcached)
+- Add performance profiling and optimization
+- Expand test coverage to >80%
+- Build better UI components with Qt Designer
+
+**For current development priorities, see [GitHub Issues](https://github.com/TyronDenker/eve-means-of-profit/issues)**
+
+---
+
+## Adding New Features
+
+### Adding a New Service
+
+1. Create service class in `src/core/`
+2. Inject dependencies (`SDEManager`, `MarketDataManager`) in `__init__`
+3. Define public methods with typed return values
+4. Register in `main.py` and wire to UI
+
+### Adding a New EVE Data Model
+
+1. Create Pydantic model in `src/models/eve/`
+2. Add loader in `src/data/loaders/sde_jsonl.py`
+3. Add cache in `SDEManager`
+4. Add query methods
+
+### Working with SDE Data
+
+- **Location**: `data/sde/*.jsonl` (one JSON per line)
+- **Schema**: CCP's SDE YAML structure (converted to JSON)
+- **Access**: Use `SDEManager` methods, not direct file loading
+- **Performance**: `SDEManager` builds O(1) hashmaps
 
 ---
 
 ## External Resources
 
-- **EVE API Documentation**: [EVE Third Party Developers](https://developers.eveonline.com/)
-- **Fuzzwork Market Data**: [Fuzzwork Market Data](https://market.fuzzwork.co.uk/api/)
-- **EVE Ref**: [EVE Ref](https://docs.everef.net/)
+- [EVE API Documentation](https://developers.eveonline.com/) - EVE Third Party Developers
+- [Fuzzwork Market API](https://market.fuzzwork.co.uk/api/) - Market data
+- [EVE Ref](https://docs.everef.net/) - Reference data
+- [CCP SDE Documentation](https://developers.eveonline.com/resource/resources) - Static data

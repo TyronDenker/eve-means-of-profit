@@ -26,6 +26,8 @@ cd eve-means-of-profit
 uv sync
 ```
 
+> **Note**: Development tools (ruff, pytest, ty) are in the dev dependency group. To install them, use `uv sync --all-groups`.
+
 ### Running the Application
 
 ```bash
@@ -46,7 +48,7 @@ This project is being rapidly developed to get a working minimum viable product.
 
 - **Business logic may have shortcuts** – Some calculations are approximations or use hardcoded defaults
 - **Design patterns vary** – Some corners might have been cut, which should be avoided and rapidly fixed in future iterations.
-- **Test coverage is growing** – See [TESTING_GUIDE.md](TESTING_GUIDE.md) for how to write tests.
+- **Test coverage is growing** – See [CONTRIBUTING.md](CONTRIBUTING.md#testing-guide) for how to write tests.
 - **Data validation is minimal** – Input sanitization and error handling need improvement.
 - **Performance not optimized** – Caching and query optimization are functional but not tuned.
 
@@ -62,7 +64,7 @@ src/
 
 ```
 
-See [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) for detailed architecture documentation and [TESTING_GUIDE.md](TESTING_GUIDE.md) for testing guidelines.
+See [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) for detailed architecture documentation and [CONTRIBUTING.md](CONTRIBUTING.md#testing-guide) for testing guidelines.
 
 ## Contributing
 
@@ -88,7 +90,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ### Areas Needing Help
 
-- Test coverage (see [TESTING_GUIDE.md](TESTING_GUIDE.md))
+- Test coverage (see [CONTRIBUTING.md](CONTRIBUTING.md#testing-guide))
 - API integration with ESI, SDE and 3rd party services (Fuzzwork, EVE Ref)
 - UI/UX improvements
 - Refactoring and code quality enhancements
