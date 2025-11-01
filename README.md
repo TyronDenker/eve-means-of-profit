@@ -1,7 +1,7 @@
 # EVE Means of Profit
 
 [![CI](https://img.shields.io/github/actions/workflow/status/TyronDenker/eve-means-of-profit/python-app.yml?branch=main&label=CI&logo=github&style=flat)](https://github.com/TyronDenker/eve-means-of-profit/actions/workflows/python-app.yml)
-[![Coverage](https://img.shields.io/codecov/c/github/TyronDenker/eve-means-of-profit/main?label=coverage&logo=codecov&style=flat)](https://codecov.io/gh/TyronDenker/eve-means-of-profit)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/TyronDenker/e50b6ec05102a848c2d8423d4af56ed0/raw/eve-means-of-profit-coverage.json)](https://github.com/TyronDenker/eve-means-of-profit/actions/workflows/python-app.yml)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![ty](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ty/main/assets/badge/v0.json)](https://github.com/astral-sh/ty)
