@@ -5,11 +5,14 @@ description = "A fully featured EVE Online tool for asset tracking, manufacturin
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "pip-audit>=2.9.0",
     "pre-commit>=4.3.0",
     "pydantic>=2.12.2",
     "pyqt6>=6.10.0",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
+    "ruff>=0.14.3",
+    "ty>=0.0.1a25",
 ]
 
 authors = [{ name = "Tyron Denker", email = "tyronevedenker@gmail.com" }]
