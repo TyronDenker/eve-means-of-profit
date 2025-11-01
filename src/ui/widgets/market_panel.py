@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core import MarketService, PriceAnalyzer
-from src.utils.formatting import format_currency, format_number
+from core import MarketService, PriceAnalyzer
+from utils.formatting import format_currency, format_number
 
 logger = logging.getLogger(__name__)
 

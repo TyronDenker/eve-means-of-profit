@@ -5,8 +5,8 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 
-from src.models.eve import MarketPrice
-from src.utils.config import Config
+from models.eve import MarketPrice
+from utils.config import Config
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ including cost calculations and profit analysis for manufacturing.
 import logging
 from typing import Any
 
-from src.data.managers import MarketDataManager, SDEManager
+from data.managers import MarketDataManager, SDEManager
 
 logger = logging.getLogger(__name__)
 

@@ -5,17 +5,17 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from src.core import (
+from core import (
     BlueprintService,
     ManufacturingService,
     MarketService,
     PriceAnalyzer,
     TypeService,
 )
-from src.data.loaders.fuzzwork_csv import FuzzworkCSVLoader
-from src.data.loaders.sde_jsonl import SDEJsonlLoader
-from src.data.managers import MarketDataManager, SDEManager
-from src.ui.main_window import MainWindow
+from data.loaders.fuzzwork_csv import FuzzworkCSVLoader
+from data.loaders.sde_jsonl import SDEJsonlLoader
+from data.managers import MarketDataManager, SDEManager
+from ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 

@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core import BlueprintService, ManufacturingService
-from src.data.managers import SDEManager
-from src.models.eve import EveBlueprint
-from src.models.ui import BlueprintTableModel
-from src.utils import format_time
+from core import BlueprintService, ManufacturingService
+from data.managers import SDEManager
+from models.eve import EveBlueprint
+from models.ui import BlueprintTableModel
+from utils import format_time
 
 logger = logging.getLogger(__name__)
 

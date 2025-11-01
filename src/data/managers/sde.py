@@ -3,8 +3,8 @@
 import logging
 from collections import defaultdict
 
-from src.data.loaders.sde_jsonl import SDEJsonlLoader
-from src.models.eve import (
+from data.loaders.sde_jsonl import SDEJsonlLoader
+from models.eve import (
     EveBlueprint,
     EveCategory,
     EveDogmaAttribute,

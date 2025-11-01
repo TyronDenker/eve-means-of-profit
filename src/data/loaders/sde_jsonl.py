@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from src.models.eve import (
+from models.eve import (
     EveBlueprint,
     EveCategory,
     EveDogmaAttribute,
@@ -17,8 +17,8 @@ from src.models.eve import (
     EveType,
     EveTypeMaterial,
 )
-from src.utils.config import Config
-from src.utils.jsonl_parser import JSONLParser
+from utils.config import Config
+from utils.jsonl_parser import JSONLParser
 
 logger = logging.getLogger(__name__)
 

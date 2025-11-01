@@ -7,8 +7,8 @@ combining SDE data with market data for comprehensive type information.
 import logging
 from typing import Any
 
-from src.data.managers import MarketDataManager, SDEManager
-from src.models.eve import EveType
+from data.managers import MarketDataManager, SDEManager
+from models.eve import EveType
 
 logger = logging.getLogger(__name__)
 

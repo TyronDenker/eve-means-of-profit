@@ -3,8 +3,8 @@
 import logging
 from collections import defaultdict
 
-from src.data.loaders.fuzzwork_csv import FuzzworkCSVLoader
-from src.models.eve import MarketPrice
+from data.loaders.fuzzwork_csv import FuzzworkCSVLoader
+from models.eve import MarketPrice
 
 logger = logging.getLogger(__name__)
 

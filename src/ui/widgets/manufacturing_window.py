@@ -24,9 +24,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core import ManufacturingService
-from src.data.managers import SDEManager
-from src.utils import format_time
+from core import ManufacturingService
+from data.managers import SDEManager
+from utils import format_time
 
 logger = logging.getLogger(__name__)
 

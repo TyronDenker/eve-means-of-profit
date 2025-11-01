@@ -4,12 +4,12 @@ from typing import Any, ClassVar
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QVariant
 
-from src.models.eve import EveType
-from src.utils import format_currency, format_mass, format_number, format_volume
+from models.eve import EveType
+from utils import format_currency, format_mass, format_number, format_volume
 
 # Optional import for market data manager
 try:
-    from src.data.managers import MarketDataManager
+    from data.managers import MarketDataManager
 except ImportError:
     MarketDataManager = None  # type: ignore
 

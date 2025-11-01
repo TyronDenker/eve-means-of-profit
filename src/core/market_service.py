@@ -7,7 +7,7 @@ coordinates between price analyzer and market data manager.
 import logging
 from typing import Any
 
-from src.data.managers import MarketDataManager
+from data.managers import MarketDataManager
 
 logger = logging.getLogger(__name__)
 

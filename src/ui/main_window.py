@@ -4,15 +4,15 @@ import logging
 
 from PyQt6.QtWidgets import QMainWindow, QTabWidget
 
-from src.core import (
+from core import (
     BlueprintService,
     ManufacturingService,
     MarketService,
     PriceAnalyzer,
     TypeService,
 )
-from src.data.managers import MarketDataManager, SDEManager
-from src.ui.widgets import ManufacturingWindow, TypesBrowser
+from data.managers import MarketDataManager, SDEManager
+from ui.widgets import ManufacturingWindow, TypesBrowser
 
 logger = logging.getLogger(__name__)
 

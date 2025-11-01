@@ -11,7 +11,7 @@ This service provides comprehensive manufacturing calculations including:
 import logging
 from typing import Any, TypedDict
 
-from src.data.managers import MarketDataManager, SDEManager
+from data.managers import MarketDataManager, SDEManager
 
 logger = logging.getLogger(__name__)
 

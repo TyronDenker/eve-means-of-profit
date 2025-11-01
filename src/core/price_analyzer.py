@@ -7,7 +7,7 @@ calculating profit margins, and identifying trading opportunities.
 import logging
 from typing import Any, TypedDict
 
-from src.data.managers import MarketDataManager
+from data.managers import MarketDataManager
 
 logger = logging.getLogger(__name__)
 

@@ -15,14 +15,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.core import MarketService, PriceAnalyzer
-from src.data.managers import MarketDataManager, SDEManager
-from src.models.eve import EveType
-from src.models.ui import TypesTableModel
-from src.ui.widgets.filter_panel import FilterPanel
-from src.ui.widgets.market_panel import MarketPricePanel
-from src.ui.widgets.search_bar import SearchBar
-from src.utils.formatting import format_currency
+from core import MarketService, PriceAnalyzer
+from data.managers import MarketDataManager, SDEManager
+from models.eve import EveType
+from models.ui import TypesTableModel
+from ui.widgets.filter_panel import FilterPanel
+from ui.widgets.market_panel import MarketPricePanel
+from ui.widgets.search_bar import SearchBar
+from utils.formatting import format_currency
 
 logger = logging.getLogger(__name__)
 
