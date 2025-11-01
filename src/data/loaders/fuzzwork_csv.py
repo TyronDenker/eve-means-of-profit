@@ -4,7 +4,6 @@ import csv
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 from src.models.eve import MarketPrice
 from src.utils.config import Config
@@ -120,7 +119,7 @@ class FuzzworkCSVLoader:
         logger.info(f"Loading market prices from {file_path}...")
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 reader = csv.DictReader(f)
 
                 count = 0

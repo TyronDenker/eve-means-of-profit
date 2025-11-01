@@ -39,7 +39,7 @@ class JSONLParser:
             raise FileNotFoundError(f"File not found: {self.file_path}")
 
         count = 0
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        with open(self.file_path, encoding="utf-8") as f:
             for line_num, line in enumerate(f, start=1):
                 line = line.strip()
                 if not line:
