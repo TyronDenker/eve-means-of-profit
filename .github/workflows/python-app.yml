@@ -21,22 +21,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-      
+
       - name: Set up Python 3.13
         run: uv python install 3.13
-      
+
       - name: Install dependencies
         run: uv sync --all-groups
-      
+
       - name: Run Ruff linter
         run: uv run ruff check . --output-format=github
         continue-on-error: true
-      
+
       - name: Run Ruff formatter check
         run: uv run ruff format --check .
         continue-on-error: true
@@ -46,18 +46,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-      
+
       - name: Set up Python 3.13
         run: uv python install 3.13
-      
+
       - name: Install dependencies
         run: uv sync --all-groups
-      
+
       - name: Run ty type checker
         run: uv run ty check src/
         continue-on-error: true
@@ -67,32 +67,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-      
+
       - name: Set up Python 3.13
         run: uv python install 3.13
-      
+
       - name: Install dependencies
         run: uv sync --all-groups
-      
+
       - name: Run tests with coverage
         run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html #--cov-fail-under=60
-      
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v4
-        if: always()
+
+      - name: Extract coverage percentage
+        if: github.ref == 'refs/heads/main'
+        run: |
+          COVERAGE=$(uv run python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(round(float(root.attrib['line-rate']) * 100, 2))")
+          echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
+          echo "Coverage: $COVERAGE%"
+
+      - name: Create coverage badge
+        if: github.ref == 'refs/heads/main'
+        uses: schneegans/dynamic-badges-action@v1.7.0
         with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      
+          auth: ${{ secrets.COVERAGE_BADGE_GIST_SECRET }}
+          gistID: ${{ secrets.COVERAGE_BADGE_GIST_ID }}
+          filename: eve-means-of-profit-coverage.json
+          label: coverage
+          message: ${{ env.COVERAGE }}%
+          valColorRange: ${{ env.COVERAGE }}
+          maxColorRange: 100
+          minColorRange: 0
+          style: flat
+
       # - name: Archive coverage report
       #   uses: actions/upload-artifact@v4
       #   if: always()
