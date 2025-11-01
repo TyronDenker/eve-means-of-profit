@@ -1,6 +1,12 @@
 # EVE Means of Profit
 
-A profit analysis tool for EVE Online industry and manufacturing, currently in active MVP development.
+[![CI](https://github.com/TyronDenker/eve-means-of-profit/workflows/CI/badge.svg)](https://github.com/TyronDenker/eve-means-of-profit/actions/workflows/python-app.yml)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![ty](https://img.shields.io/badge/type_checker-ty-blue.svg)](https://github.com/astral-sh/ty)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
+A fully featured EVE Online tool for asset tracking, manufacturing and trading analysis, currently in active MVP development.
 
 ## Quick Start
 
@@ -60,14 +66,25 @@ See [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) for detailed architecture documenta
 
 ## Contributing
 
-This is an open-source project. Contributions are welcome!
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
-### Guidelines
+- Development environment setup
+- Code quality standards (Ruff + ty)
+- Testing guidelines and examples
+- Pull request workflow
+- CI/CD pipeline details
 
-- **Code style**: Follow existing patterns where they exist, use your best judgment elsewhere, utilize ruff for formatting.
-- **Commit messages**: Keep them descriptive
-- **Pull requests**: Small, focused PRs are easier to review
-- **Issues**: Report bugs or suggest features via GitHub Issues
+### Quick Contribution Guide
+
+1. Fork and clone: `git clone https://github.com/TyronDenker/eve-means-of-profit`
+2. Setup environment: `uv sync`
+3. Setup hooks: `uv run pre-commit install`
+4. Create branch: `git checkout -b feature/my-feature`
+5. Make changes and test: `uv run pytest --cov=src`
+6. Run checks: `uv run ruff check . --fix && uv run ruff format .`
+7. Push and create PR
+
+**For detailed guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md)**
 
 ### Areas Needing Help
 
@@ -81,8 +98,8 @@ This is an open-source project. Contributions are welcome!
 ### Documentation
 
 - [README.md](README.md) - Project overview and quick start
-- [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) - Architecture and development guidelines
-- [TESTING_GUIDE.md](TESTING_GUIDE.md) - **New!** How to write tests for this project
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Development guide, testing, and workflow
+- [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) - Architecture and system design
 
 ## Data Sources
 
