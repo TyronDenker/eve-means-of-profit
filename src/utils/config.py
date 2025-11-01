@@ -23,10 +23,9 @@ def get_base_path() -> Path:
         # Running as compiled executable (PyInstaller)
         # sys._MEIPASS is the temporary folder PyInstaller creates
         return Path(getattr(sys, "_MEIPASS", ""))
-    else:
-        # Running in development
-        # Go up from src/utils/config.py to project root
-        return Path(__file__).parent.parent.parent
+    # Running in development
+    # Go up from src/utils/config.py to project root
+    return Path(__file__).parent.parent.parent
 
 
 def get_data_path() -> Path:

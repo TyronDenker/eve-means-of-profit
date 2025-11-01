@@ -171,9 +171,8 @@ class MarketDataManager:
         if is_buy_order:
             # Highest buy price
             return max(p.max_val for p in prices)
-        else:
-            # Lowest sell price
-            return min(p.min_val for p in prices)
+        # Lowest sell price
+        return min(p.min_val for p in prices)
 
     def get_all_prices_for_type(
         self,

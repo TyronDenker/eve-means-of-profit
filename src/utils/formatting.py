@@ -83,10 +83,9 @@ def format_volume(value: float | None) -> str:
 
     if value < 1:
         return f"{value:.4f} m³"
-    elif value < 1000:
+    if value < 1000:
         return f"{value:.2f} m³"
-    else:
-        return f"{format_number(value, decimals=2)} m³"
+    return f"{format_number(value, decimals=2)} m³"
 
 
 def format_mass(value: float | None) -> str:
@@ -104,10 +103,9 @@ def format_mass(value: float | None) -> str:
 
     if value < 1:
         return f"{value:.4f} kg"
-    elif value < 1000:
+    if value < 1000:
         return f"{value:.2f} kg"
-    elif value < 1_000_000:
+    if value < 1_000_000:
         # Convert to tons
         return f"{value / 1000:.2f} tons"
-    else:
-        return f"{format_number(value, decimals=2)} kg"
+    return f"{format_number(value, decimals=2)} kg"
