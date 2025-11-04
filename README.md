@@ -32,7 +32,7 @@ uv sync
 ### Running the Application
 
 ```bash
-uv run python -m main
+uv run python -m src
 ```
 
 The application will:

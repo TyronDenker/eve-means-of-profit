@@ -8,7 +8,7 @@
             "name": "Debug Main",
             "type": "debugpy",
             "request": "launch",
-            "module": "main"
+            "module": "src"
         }
     ]
 }
