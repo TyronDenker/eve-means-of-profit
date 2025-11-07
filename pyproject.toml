@@ -102,7 +102,7 @@ select = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-line-ending = "auto"
+line-ending = "lf"
 docstring-code-format = true # Format code examples in docstrings
 
 [tool.pytest.ini_options]
@@ -111,9 +111,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-markers = [
-    "asyncio: mark test as async",
-]
+markers = ["asyncio: mark test as async"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = [
