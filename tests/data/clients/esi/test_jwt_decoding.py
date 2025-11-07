@@ -2,11 +2,12 @@
 
 import base64
 import json
+from pathlib import Path
 
 from data.clients.esi.auth import TokenProvider
 
 
-def test_decode_token_claims():
+def test_decode_token_claims(tmp_path):
     """Test that JWT token claims are properly decoded."""
     # Create a minimal JWT token for testing
     # Format: header.payload.signature (we only care about payload)
@@ -30,8 +31,9 @@ def test_decode_token_claims():
     fake_signature = "fake_signature"
     test_token = f"{fake_header}.{payload_b64}.{fake_signature}"
 
-    # Create TokenProvider instance
-    provider = TokenProvider(client_id="test_client_id")
+    # Create TokenProvider instance with temporary token file
+    token_file = tmp_path / "test_tokens.json"
+    provider = TokenProvider(client_id="test_client_id", token_file=token_file)
 
     # Decode the token
     result = provider._decode_token_claims(test_token)
@@ -45,7 +47,7 @@ def test_decode_token_claims():
     ]
 
 
-def test_decode_token_with_padding():
+def test_decode_token_with_padding(tmp_path):
     """Test JWT decoding with various base64 padding scenarios."""
     # Test with payload that needs padding
     payload_data = {"sub": "CHARACTER:EVE:987654321", "name": "X", "scp": []}
@@ -57,7 +59,9 @@ def test_decode_token_with_padding():
     fake_signature = "sig"
     test_token = f"{fake_header}.{payload_b64}.{fake_signature}"
 
-    provider = TokenProvider(client_id="test")
+    # Create TokenProvider instance with temporary token file
+    token_file = tmp_path / "test_tokens.json"
+    provider = TokenProvider(client_id="test", token_file=token_file)
     result = provider._decode_token_claims(test_token)
 
     assert result["character_id"] == 987654321
@@ -66,11 +70,17 @@ def test_decode_token_with_padding():
 
 
 if __name__ == "__main__":
-    # Run tests
-    test_decode_token_claims()
-    print("✅ test_decode_token_claims passed")
+    # Run tests with a temporary directory
+    from tempfile import TemporaryDirectory
 
-    test_decode_token_with_padding()
-    print("✅ test_decode_token_with_padding passed")
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
 
-    print("\n✅ All JWT decoding tests passed!")
+        # Run tests
+        test_decode_token_claims(tmp_path)
+        print("✅ test_decode_token_claims passed")
+
+        test_decode_token_with_padding(tmp_path)
+        print("✅ test_decode_token_with_padding passed")
+
+        print("\n✅ All JWT decoding tests passed!")

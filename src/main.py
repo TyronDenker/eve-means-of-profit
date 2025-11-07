@@ -16,6 +16,7 @@ from data.parsers.fuzzwork_csv import FuzzworkCSVParser
 from data.parsers.sde_jsonl import SDEJsonlParser
 from data.providers import MarketDataProvider, SDEProvider
 from ui.main_window import MainWindow
+from utils.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,20 @@ class EVEProfitApp:
         self._app.setApplicationName("EVE Means of Profit")
         self._app.setOrganizationName("EVE Tools")
 
+        # Load configuration
+        config = Config
+
         # ============================================================
         # Dependency Injection - Layer 1: Data Parsers
         # ============================================================
         logger.info("Initializing data parsers...")
-        self._sde_parser = SDEJsonlParser()
-        self._market_parser = FuzzworkCSVParser()
+
+        # Ensure paths are resolved (they won't be None after Config initialization)
+        assert config.paths.sde_path is not None, "SDE path not configured"
+        assert config.paths.fuzzwork_path is not None, "Fuzzwork path not configured"
+
+        self._sde_parser = SDEJsonlParser(data_path=config.paths.sde_path)
+        self._market_parser = FuzzworkCSVParser(data_path=config.paths.fuzzwork_path)
 
         # ============================================================
         # Dependency Injection - Layer 2: Data Providers

@@ -17,7 +17,6 @@ from models.eve import (
     EveType,
     EveTypeMaterial,
 )
-from utils.config import Config
 from utils.jsonl_parser import JSONLParser
 
 logger = logging.getLogger(__name__)
@@ -92,22 +91,16 @@ FIELD_NAME_MAP = {
 class SDEJsonlParser:
     """Parser for SDE JSONL files with lazy loading capabilities."""
 
-    def __init__(self, base_path: Path | str | None = None):
-        """Initialize the parser with a base path to SDE data.
+    def __init__(self, data_path: Path | str):
+        """Initialize the parser with the SDE data path.
 
         Args:
-            base_path: Path to the SDE data directory. If None, uses Config.SDE_PATH
-                      which works correctly with PyInstaller and environment variables.
-
+            data_path: Path to the SDE data directory
         """
-        if base_path is None:
-            # Use config path (PyInstaller compatible)
-            self.base_path = Config.SDE_PATH
-        else:
-            self.base_path = Path(base_path)
+        self.file_path = Path(data_path)
 
-        if not self.base_path.exists():
-            logger.warning(f"SDE base path does not exist: {self.base_path}")
+        if not self.file_path.exists():
+            logger.warning(f"SDE base path does not exist: {self.file_path}")
 
     def _load_jsonl(self, filename: str) -> Iterator[dict[str, Any]]:
         """Load a JSONL file and return an iterator of dictionaries.
@@ -122,7 +115,7 @@ class SDEJsonlParser:
             FileNotFoundError: If the file doesn't exist
 
         """
-        file_path = self.base_path / filename
+        file_path = self.file_path / filename
         parser = JSONLParser(file_path)
         yield from parser.parse()
 

@@ -34,23 +34,19 @@ class TokenProvider:
     def __init__(
         self,
         client_id: str,
+        token_file: str | Path,
         redirect_uri: str = "http://localhost:8080/eve-means-of-profit",
-        token_file: str | Path | None = None,
     ):
         """
         Initialize token provider.
 
         Args:
             client_id: ESI application client ID
+            token_file: Path to token storage file
             redirect_uri: OAuth2 redirect URI
-            token_file: Path to token storage file (default: data/esi/tokens.json)
         """
         self.client_id = client_id
         self.redirect_uri = redirect_uri
-
-        # Set default token file location
-        if token_file is None:
-            token_file = Path("data/esi/tokens.json")
         self.token_file = Path(token_file)
 
         # Ensure directory exists

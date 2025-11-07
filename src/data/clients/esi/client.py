@@ -34,27 +34,30 @@ class ESIClient:
 
     def __init__(
         self,
-        client_id: str | None = None,
-        token_file: str | Path | None = None,
-        cache_dir: str | Path | None = None,
+        client_id: str,
+        token_file: str | Path,
+        cache_dir: str | Path,
+        user_agent: str,
         rate_limit_threshold: int = 10,
     ):
         """
         Initialize ESI client.
 
         Args:
-            client_id: ESI application client ID (required for authenticated requests)
+            client_id: ESI application client ID
             token_file: Path to token storage file
             cache_dir: Directory for cache storage
+            user_agent: User agent string for HTTP requests
             rate_limit_threshold: Start throttling when errors fall below this value
         """
         self.client_id = client_id
+        self.user_agent = user_agent
 
-        # Initialize components
-        self.token_provider = (
-            TokenProvider(client_id, token_file=token_file) if client_id else None
+        # Initialize components with provided config values
+        self.token_provider = TokenProvider(
+            client_id=self.client_id, token_file=token_file
         )
-        self.cache = CacheBackend(cache_dir)
+        self.cache = CacheBackend(cache_dir=cache_dir)
         self.rate_limiter = RateLimiter(threshold=rate_limit_threshold)
 
         # HTTP client
@@ -64,7 +67,7 @@ class ESIClient:
     async def __aenter__(self) -> ESIClient:
         """Async context provider entry."""
         self._http_client = httpx.AsyncClient(
-            headers={"User-Agent": self.USER_AGENT},
+            headers={"User-Agent": self.user_agent},
             timeout=30.0,
         )
         return self

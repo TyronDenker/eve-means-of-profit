@@ -13,11 +13,13 @@ class TestCacheBackend:
     @pytest.fixture
     def cache(self, tmp_path):
         """Create a temporary cache backend."""
-        return CacheBackend(cache_dir=tmp_path / "test_cache")
+        cache_dir = tmp_path / "test_cache"
+        return CacheBackend(cache_dir=cache_dir)
 
     def test_init(self, tmp_path):
         """Test cache initialization."""
-        cache = CacheBackend(cache_dir=tmp_path / "test_cache")
+        cache_dir = tmp_path / "test_cache"
+        cache = CacheBackend(cache_dir=cache_dir)
         assert cache.cache_dir.exists()
 
     def test_cache_key_generation(self, cache):
