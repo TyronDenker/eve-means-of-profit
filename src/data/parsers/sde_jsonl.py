@@ -96,13 +96,13 @@ class SDEJsonlParser:
         """Initialize the parser with a base path to SDE data.
 
         Args:
-            base_path: Path to the SDE data directory. If None, uses Config.SDE_PATH
+            base_path: Path to the SDE data directory. If None, uses Config().paths.sde_path
                       which works correctly with PyInstaller and environment variables.
 
         """
         if base_path is None:
             # Use config path (PyInstaller compatible)
-            self.base_path = Config.SDE_PATH
+            self.base_path = Config().paths.sde_path
         else:
             self.base_path = Path(base_path)
 

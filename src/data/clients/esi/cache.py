@@ -28,16 +28,13 @@ class CacheBackend:
     Supports ETag-based caching and respects Expires headers.
     """
 
-    def __init__(self, cache_dir: str | Path | None = None):
+    def __init__(self, cache_dir: str | Path):
         """
         Initialize cache backend.
 
         Args:
-            cache_dir: Directory to store cache (default: data/esi/cache)
+            cache_dir: Directory to store cache
         """
-        if cache_dir is None:
-            cache_dir = Path("data/esi/cache")
-
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache = Cache(str(self.cache_dir))
