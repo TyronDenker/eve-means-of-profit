@@ -3,7 +3,7 @@
 import base64
 import json
 
-from data.clients.esi.auth import TokenManager
+from data.clients.esi.auth import TokenProvider
 
 
 def test_decode_token_claims():
@@ -30,11 +30,11 @@ def test_decode_token_claims():
     fake_signature = "fake_signature"
     test_token = f"{fake_header}.{payload_b64}.{fake_signature}"
 
-    # Create TokenManager instance
-    manager = TokenManager(client_id="test_client_id")
+    # Create TokenProvider instance
+    provider = TokenProvider(client_id="test_client_id")
 
     # Decode the token
-    result = manager._decode_token_claims(test_token)
+    result = provider._decode_token_claims(test_token)
 
     # Verify the results
     assert result["character_id"] == 123456789
@@ -57,8 +57,8 @@ def test_decode_token_with_padding():
     fake_signature = "sig"
     test_token = f"{fake_header}.{payload_b64}.{fake_signature}"
 
-    manager = TokenManager(client_id="test")
-    result = manager._decode_token_claims(test_token)
+    provider = TokenProvider(client_id="test")
+    result = provider._decode_token_claims(test_token)
 
     assert result["character_id"] == 987654321
     assert result["character_name"] == "X"

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from .auth import TokenManager
+from .auth import TokenProvider
 from .cache import CacheBackend
 from .rate_limiter import RateLimiter
 
@@ -51,8 +51,8 @@ class ESIClient:
         self.client_id = client_id
 
         # Initialize components
-        self.token_manager = (
-            TokenManager(client_id, token_file=token_file) if client_id else None
+        self.token_provider = (
+            TokenProvider(client_id, token_file=token_file) if client_id else None
         )
         self.cache = CacheBackend(cache_dir)
         self.rate_limiter = RateLimiter(threshold=rate_limit_threshold)
@@ -62,7 +62,7 @@ class ESIClient:
         self._active_character_id: int | None = None
 
     async def __aenter__(self) -> ESIClient:
-        """Async context manager entry."""
+        """Async context provider entry."""
         self._http_client = httpx.AsyncClient(
             headers={"User-Agent": self.USER_AGENT},
             timeout=30.0,
@@ -70,7 +70,7 @@ class ESIClient:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        """Async context manager exit."""
+        """Async context provider exit."""
         if self._http_client:
             await self._http_client.aclose()
 
@@ -128,16 +128,16 @@ class ESIClient:
 
         # Add authentication if needed
         if authenticated:
-            if not self.token_manager or self._active_character_id is None:
+            if not self.token_provider or self._active_character_id is None:
                 msg = "Authentication required but no character set"
                 raise ValueError(msg)
 
-            token = await self.token_manager.get_token(self._active_character_id)
+            token = await self.token_provider.get_token(self._active_character_id)
             headers["Authorization"] = f"Bearer {token}"
 
         # Make request
         if not self._http_client:
-            msg = "Client not initialized. Use 'async with' context manager."
+            msg = "Client not initialized. Use 'async with' context provider."
             raise RuntimeError(msg)
 
         response = await self._http_client.get(url, params=params, headers=headers)
@@ -150,9 +150,7 @@ class ESIClient:
 
         # Handle 304 Not Modified
         if response.status_code == 304:
-            logger.info(
-                f"304 Not Modified: {path} - Serving from cache (ETag match)"
-            )
+            logger.info(f"304 Not Modified: {path} - Serving from cache (ETag match)")
             cached = self.cache.get("GET", path, params, character_id)
             if cached:
                 return cached["data"]
@@ -197,16 +195,16 @@ class ESIClient:
 
         # Add authentication
         if authenticated:
-            if not self.token_manager or self._active_character_id is None:
+            if not self.token_provider or self._active_character_id is None:
                 msg = "Authentication required but no character set"
                 raise ValueError(msg)
 
-            token = await self.token_manager.get_token(self._active_character_id)
+            token = await self.token_provider.get_token(self._active_character_id)
             headers["Authorization"] = f"Bearer {token}"
 
         # Make request
         if not self._http_client:
-            msg = "Client not initialized. Use 'async with' context manager."
+            msg = "Client not initialized. Use 'async with' context provider."
             raise RuntimeError(msg)
 
         response = await self._http_client.post(

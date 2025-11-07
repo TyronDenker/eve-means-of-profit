@@ -7,7 +7,7 @@ combining SDE data with market data for comprehensive type information.
 import logging
 from typing import Any
 
-from data.managers import MarketDataManager, SDEManager
+from data.providers import MarketDataProvider, SDEProvider
 from models.eve import EveType
 
 logger = logging.getLogger(__name__)
@@ -22,18 +22,18 @@ class TypeService:
 
     def __init__(
         self,
-        sde_manager: SDEManager,
-        market_manager: MarketDataManager | None = None,
+        sde_provider: SDEProvider,
+        market_provider: MarketDataProvider | None = None,
     ):
         """Initialize the type service.
 
         Args:
-            sde_manager: SDEManager for type data access
-            market_manager: Optional MarketDataManager for price data
+            sde_provider: SDEProvider for type data access
+            market_provider: Optional MarketDataProvider for price data
 
         """
-        self._sde_manager = sde_manager
-        self._market_manager = market_manager
+        self._sde_provider = sde_provider
+        self._market_provider = market_provider
 
     def get_type_with_market_data(
         self, type_id: int, region_id: int = 10000002
@@ -48,7 +48,7 @@ class TypeService:
             Dictionary combining type and market data, or None
 
         """
-        eve_type = self._sde_manager.get_type_by_id(type_id)
+        eve_type = self._sde_provider.get_type_by_id(type_id)
         if not eve_type:
             return None
 
@@ -57,11 +57,11 @@ class TypeService:
             "market_data": None,
         }
 
-        if self._market_manager:
-            sell_price = self._market_manager.get_price(
+        if self._market_provider:
+            sell_price = self._market_provider.get_price(
                 type_id, region_id, is_buy_order=False
             )
-            buy_price = self._market_manager.get_price(
+            buy_price = self._market_provider.get_price(
                 type_id, region_id, is_buy_order=True
             )
 
@@ -99,11 +99,11 @@ class TypeService:
         """
         # Start with all types or filtered by category/group
         if group_id is not None:
-            types = self._sde_manager.get_types_by_group(group_id)
+            types = self._sde_provider.get_types_by_group(group_id)
         elif category_id is not None:
-            types = self._sde_manager.get_types_by_category(category_id)
+            types = self._sde_provider.get_types_by_category(category_id)
         else:
-            types = self._sde_manager.get_all_types()
+            types = self._sde_provider.get_all_types()
 
         # Apply published filter
         if published_only:
@@ -119,11 +119,11 @@ class TypeService:
             ]
 
         # Apply market data filter
-        if has_market_data and self._market_manager:
+        if has_market_data and self._market_provider:
             types = [
                 t
                 for t in types
-                if self._market_manager.has_market_data(t.id, region_id)
+                if self._market_provider.has_market_data(t.id, region_id)
             ]
 
         return types
@@ -145,22 +145,22 @@ class TypeService:
             List of (type, margin_percent) tuples sorted by margin
 
         """
-        if not self._market_manager:
+        if not self._market_provider:
             return []
 
         profitable: list[tuple[EveType, float]] = []
 
         # Get all types with market data
-        all_types = self._sde_manager.get_published_types()
+        all_types = self._sde_provider.get_published_types()
 
         for eve_type in all_types:
-            if not self._market_manager.has_market_data(eve_type.id, region_id):
+            if not self._market_provider.has_market_data(eve_type.id, region_id):
                 continue
 
-            sell_price = self._market_manager.get_price(
+            sell_price = self._market_provider.get_price(
                 eve_type.id, region_id, is_buy_order=False
             )
-            buy_price = self._market_manager.get_price(
+            buy_price = self._market_provider.get_price(
                 eve_type.id, region_id, is_buy_order=True
             )
 
@@ -197,7 +197,7 @@ class TypeService:
             Dictionary with all available type information
 
         """
-        eve_type = self._sde_manager.get_type_by_id(type_id)
+        eve_type = self._sde_provider.get_type_by_id(type_id)
         if not eve_type:
             return None
 
@@ -211,24 +211,24 @@ class TypeService:
 
         # Get group
         if eve_type.group_id is not None:
-            info["group"] = self._sde_manager.get_group_by_id(eve_type.group_id)
+            info["group"] = self._sde_provider.get_group_by_id(eve_type.group_id)
 
             # Get category from group
             if info["group"] is not None:
-                info["category"] = self._sde_manager.get_category_by_id(
+                info["category"] = self._sde_provider.get_category_by_id(
                     info["group"].category_id
                 )
 
         # Get market group
         if eve_type.market_group_id is not None:
-            info["market_group"] = self._sde_manager.get_market_group_by_id(
+            info["market_group"] = self._sde_provider.get_market_group_by_id(
                 eve_type.market_group_id
             )
 
         # Get available regions
-        if self._market_manager:
+        if self._market_provider:
             info["available_regions"] = (
-                self._market_manager.get_available_regions_for_type(type_id)
+                self._market_provider.get_available_regions_for_type(type_id)
             )
 
         return info

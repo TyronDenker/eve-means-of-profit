@@ -39,14 +39,14 @@ UI Layer (src/ui/)
   - `sde_client.py`: Provide up to date SDE data access
   - `fuzzwork_client.py`: Fuzzwork market data client
   - `everef_client.py`: EVE Ref data client
-- **`loaders/`**: Parse raw data files
+- **`parsers/`**: Parse raw data files
   - `sde_jsonl.py`: Loads EVE SDE from JSONL files
   - `fuzzwork_csv.py`: Loads market prices from CSV
-- **`managers/`**: Provide cached, optimized access to data
-  - `sde.py`: `SDEManager` - In-memory cache with O(1) lookups and indices
-  - `market.py`: `MarketDataManager` - Market price queries
+- **`providers/`**: Provide cached, optimized access to data
+  - `sde.py`: `SDEProvider` - In-memory cache with O(1) lookups and indices
+  - `market.py`: `MarketDataProvider` - Market price queries
 - **`repositories/`**: Database abstraction (currently SQLite)
-  - `sqlite_manager.py`: SQLite connection and query management
+  - `sqlite_provider.py`: SQLite connection and query management
 
 **Key Design Principle**: Lazy loading + caching. Data is loaded on first access and cached in memory.
 
@@ -76,7 +76,7 @@ UI Layer (src/ui/)
 - `market_service.py`: Market operations
 - `price_analyzer.py`: Price analysis and statistics
 
-**Key Design Principle**: Services depend on managers (data layer), not directly on loaders. Services are stateless.
+**Key Design Principle**: Services depend on providers (data layer), not directly on parsers. Services are stateless.
 
 #### `src/ui/` - User Interface
 
@@ -97,8 +97,8 @@ UI Layer (src/ui/)
 
 1. User selects blueprint in UI (`ManufacturingWindow`)
 2. UI calls `ManufacturingService.calculate_manufacturing_cost()`
-3. Service queries `SDEManager` for blueprint data
-4. Service queries `MarketDataManager` for material prices
+3. Service queries `SDEProvider` for blueprint data
+4. Service queries `MarketDataProvider` for material prices
 5. Service queries `ESIClient` for System Cost Index (SCI)
 6. Service performs calculations (ME/TE bonuses, structure bonuses, taxes)
 7. Service returns `ManufacturingCostBreakdown` typed dict
@@ -155,23 +155,23 @@ UI Layer (src/ui/)
 ### Adding a New Service
 
 1. Create service class in `src/core/`
-2. Inject dependencies (`SDEManager`, `MarketDataManager`) in `__init__`
+2. Inject dependencies (`SDEProvider`, `MarketDataProvider`) in `__init__`
 3. Define public methods with typed return values
 4. Register in `main.py` and wire to UI
 
 ### Adding a New EVE Data Model
 
 1. Create Pydantic model in `src/models/eve/`
-2. Add loader in `src/data/loaders/sde_jsonl.py`
-3. Add cache in `SDEManager`
+2. Add parser in `src/data/parsers/sde_jsonl.py`
+3. Add cache in `SDEProvider`
 4. Add query methods
 
 ### Working with SDE Data
 
 - **Location**: `data/sde/*.jsonl` (one JSON per line)
 - **Schema**: CCP's SDE YAML structure (converted to JSON)
-- **Access**: Use `SDEManager` methods, not direct file loading
-- **Performance**: `SDEManager` builds O(1) hashmaps
+- **Access**: Use `SDEProvider` methods, not direct file loading
+- **Performance**: `SDEProvider` builds O(1) hashmaps
 
 ---
 

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import MarketService, PriceAnalyzer
-from data.managers import MarketDataManager, SDEManager
+from data.providers import MarketDataProvider, SDEProvider
 from models.eve import EveType
 from models.ui import TypesTableModel
 from ui.widgets.filter_panel import FilterPanel
@@ -35,8 +35,8 @@ class TypesBrowser(QWidget):
 
     def __init__(
         self,
-        sde_manager: SDEManager,
-        market_manager: "MarketDataManager | None" = None,
+        sde_provider: SDEProvider,
+        market_provider: "MarketDataProvider | None" = None,
         market_service: MarketService | None = None,
         price_analyzer: PriceAnalyzer | None = None,
         parent=None,
@@ -44,16 +44,16 @@ class TypesBrowser(QWidget):
         """Initialize the types browser.
 
         Args:
-            sde_manager: SDEManager instance for data access
-            market_manager: MarketDataManager for price data (for table model)
+            sde_provider: SDEProvider instance for data access
+            market_provider: MarketDataProvider for price data (for table model)
             market_service: MarketService for market operations
             price_analyzer: PriceAnalyzer for price analysis
             parent: Parent widget
 
         """
         super().__init__(parent)
-        self._sde_manager = sde_manager
-        self._market_manager = market_manager
+        self._sde_provider = sde_provider
+        self._market_provider = market_provider
         self._market_service = market_service
         self._price_analyzer = price_analyzer
         self._all_types: list[EveType] = []
@@ -94,7 +94,7 @@ class TypesBrowser(QWidget):
         # Table view
         self._table_view = QTableView()
         self._table_model = TypesTableModel(
-            market_manager=self._market_manager,
+            market_provider=self._market_provider,
             region_id=self.DEFAULT_REGION_ID,
         )
         self._table_view.setModel(self._table_model)
@@ -156,17 +156,17 @@ class TypesBrowser(QWidget):
         main_layout.addLayout(status_layout)
 
     def _load_initial_data(self) -> None:
-        """Load initial data from SDE manager."""
+        """Load initial data from SDE provider."""
         logger.info("Loading types data...")
         self._status_label.setText("Loading types...")
 
         try:
             # Load all types
-            self._all_types = self._sde_manager.get_all_types()
+            self._all_types = self._sde_provider.get_all_types()
             logger.info(f"Loaded {len(self._all_types)} types")
 
             # Load categories for filter
-            categories = self._sde_manager.get_all_categories()
+            categories = self._sde_provider.get_all_categories()
             category_list = [
                 (cat.id, cat.name.en) for cat in categories if cat.published
             ]
@@ -174,7 +174,7 @@ class TypesBrowser(QWidget):
             self._filter_panel.set_categories(category_list)
 
             # Load groups for filter
-            groups = self._sde_manager.get_all_groups()
+            groups = self._sde_provider.get_all_groups()
             group_list = [(grp.id, grp.name.en) for grp in groups if grp.published]
             group_list.sort(key=lambda x: x[1])
             self._filter_panel.set_groups(group_list)
@@ -219,14 +219,14 @@ class TypesBrowser(QWidget):
         # Apply category filter
         category_id = filters.get("category_id")
         if category_id is not None:
-            filtered = self._sde_manager.get_types_by_category(category_id)
+            filtered = self._sde_provider.get_types_by_category(category_id)
             if filters.get("published_only", True):
                 filtered = [t for t in filtered if t.published]
 
         # Apply group filter
         group_id = filters.get("group_id")
         if group_id is not None:
-            filtered = self._sde_manager.get_types_by_group(group_id)
+            filtered = self._sde_provider.get_types_by_group(group_id)
             if filters.get("published_only", True):
                 filtered = [t for t in filtered if t.published]
 
@@ -283,7 +283,7 @@ class TypesBrowser(QWidget):
         details.append(f"<b>Published:</b> {'Yes' if eve_type.published else 'No'}")
 
         if eve_type.group_id is not None:
-            group = self._sde_manager.get_group_by_id(eve_type.group_id)
+            group = self._sde_provider.get_group_by_id(eve_type.group_id)
             if group:
                 details.append(f"<b>Group:</b> {group.name.en} (ID: {group.id})")
 

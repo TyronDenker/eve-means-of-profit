@@ -7,7 +7,7 @@ calculating profit margins, and identifying trading opportunities.
 import logging
 from typing import Any, TypedDict
 
-from data.managers import MarketDataManager
+from data.providers import MarketDataProvider
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +50,14 @@ class PriceAnalyzer:
     DEFAULT_SALES_TAX = 0.08  # 8% (can be reduced with skills)
     DEFAULT_BROKER_FEE = 0.03  # 3% (can be reduced with skills/standings)
 
-    def __init__(self, market_manager: MarketDataManager):
+    def __init__(self, market_provider: MarketDataProvider):
         """Initialize the price analyzer.
 
         Args:
-            market_manager: MarketDataManager for price data access
+            market_provider: MarketDataProvider for price data access
 
         """
-        self._market_manager = market_manager
+        self._market_provider = market_provider
 
     def calculate_spread(self, type_id: int, region_id: int) -> SpreadData | None:
         """Calculate price spread between buy and sell orders.
@@ -73,10 +73,10 @@ class PriceAnalyzer:
             SpreadData with spread information, or None if data unavailable
 
         """
-        sell_price = self._market_manager.get_price(
+        sell_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=False
         )
-        buy_price = self._market_manager.get_price(
+        buy_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=True
         )
 
@@ -176,10 +176,10 @@ class PriceAnalyzer:
             MarketStatistics with all price metrics, or None if no data
 
         """
-        sell_price = self._market_manager.get_price(
+        sell_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=False
         )
-        buy_price = self._market_manager.get_price(
+        buy_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=True
         )
 
@@ -222,7 +222,7 @@ class PriceAnalyzer:
         opportunities: list[tuple[int, SpreadData]] = []
 
         # Get all regions with data for this type
-        regions = self._market_manager.get_available_regions_for_type(type_id)
+        regions = self._market_provider.get_available_regions_for_type(type_id)
 
         for region_id in regions:
             spread_data = self.calculate_spread(type_id, region_id)
@@ -268,10 +268,10 @@ class PriceAnalyzer:
             Dictionary with market depth metrics or None
 
         """
-        sell_price = self._market_manager.get_price(
+        sell_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=False
         )
-        buy_price = self._market_manager.get_price(
+        buy_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=True
         )
 

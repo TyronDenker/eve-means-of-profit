@@ -12,9 +12,9 @@ from core import (
     PriceAnalyzer,
     TypeService,
 )
-from data.loaders.fuzzwork_csv import FuzzworkCSVLoader
-from data.loaders.sde_jsonl import SDEJsonlLoader
-from data.managers import MarketDataManager, SDEManager
+from data.parsers.fuzzwork_csv import FuzzworkCSVParser
+from data.parsers.sde_jsonl import SDEJsonlParser
+from data.providers import MarketDataProvider, SDEProvider
 from ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
@@ -37,31 +37,31 @@ class EVEProfitApp:
         self._app.setOrganizationName("EVE Tools")
 
         # ============================================================
-        # Dependency Injection - Layer 1: Data Loaders
+        # Dependency Injection - Layer 1: Data Parsers
         # ============================================================
-        logger.info("Initializing data loaders...")
-        self._sde_loader = SDEJsonlLoader()
-        self._market_loader = FuzzworkCSVLoader()
+        logger.info("Initializing data parsers...")
+        self._sde_parser = SDEJsonlParser()
+        self._market_parser = FuzzworkCSVParser()
 
         # ============================================================
-        # Dependency Injection - Layer 2: Data Managers
+        # Dependency Injection - Layer 2: Data Providers
         # ============================================================
-        logger.info("Initializing data managers...")
-        self._sde_manager = SDEManager(loader=self._sde_loader)
-        self._market_manager = MarketDataManager(loader=self._market_loader)
+        logger.info("Initializing data providers...")
+        self._sde_provider = SDEProvider(parser=self._sde_parser)
+        self._market_provider = MarketDataProvider(parser=self._market_parser)
 
         # ============================================================
         # Dependency Injection - Layer 3: Core Services
         # ============================================================
         logger.info("Initializing core services...")
-        self._market_service = MarketService(self._market_manager)
-        self._price_analyzer = PriceAnalyzer(self._market_manager)
-        self._type_service = TypeService(self._sde_manager, self._market_manager)
+        self._market_service = MarketService(self._market_provider)
+        self._price_analyzer = PriceAnalyzer(self._market_provider)
+        self._type_service = TypeService(self._sde_provider, self._market_provider)
         self._blueprint_service = BlueprintService(
-            self._sde_manager, self._market_manager
+            self._sde_provider, self._market_provider
         )
         self._manufacturing_service = ManufacturingService(
-            self._sde_manager, self._market_manager
+            self._sde_provider, self._market_provider
         )
 
         # ============================================================
@@ -69,8 +69,8 @@ class EVEProfitApp:
         # ============================================================
         logger.info("Creating main window...")
         self._main_window = MainWindow(
-            sde_manager=self._sde_manager,
-            market_manager=self._market_manager,
+            sde_provider=self._sde_provider,
+            market_provider=self._market_provider,
             market_service=self._market_service,
             price_analyzer=self._price_analyzer,
             type_service=self._type_service,

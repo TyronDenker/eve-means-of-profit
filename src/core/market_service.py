@@ -1,13 +1,13 @@
 """Market service for orchestrating market operations.
 
 This service provides high-level market operations and
-coordinates between price analyzer and market data manager.
+coordinates between price analyzer and market data provider.
 """
 
 import logging
 from typing import Any
 
-from data.managers import MarketDataManager
+from data.providers import MarketDataProvider
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +25,14 @@ class MarketService:
     coordinating between various market data sources.
     """
 
-    def __init__(self, market_manager: MarketDataManager):
+    def __init__(self, market_provider: MarketDataProvider):
         """Initialize the market service.
 
         Args:
-            market_manager: MarketDataManager for price data access
+            market_provider: MarketDataProvider for price data access
 
         """
-        self._market_manager = market_manager
+        self._market_provider = market_provider
 
     def get_market_summary(
         self, type_id: int, all_regions: bool = False
@@ -47,7 +47,9 @@ class MarketService:
             Dictionary with market summary data
 
         """
-        available_regions = self._market_manager.get_available_regions_for_type(type_id)
+        available_regions = self._market_provider.get_available_regions_for_type(
+            type_id
+        )
 
         summary: dict[str, Any] = {
             "type_id": type_id,
@@ -64,10 +66,10 @@ class MarketService:
         all_buy_prices: list[float] = []
 
         for region_id in available_regions:
-            sell = self._market_manager.get_price(
+            sell = self._market_provider.get_price(
                 type_id, region_id, is_buy_order=False
             )
-            buy = self._market_manager.get_price(type_id, region_id, is_buy_order=True)
+            buy = self._market_provider.get_price(type_id, region_id, is_buy_order=True)
 
             if sell:
                 all_sell_prices.append(sell.min_val)
@@ -112,10 +114,10 @@ class MarketService:
         comparisons: list[dict[str, Any]] = []
 
         for region_id in regions:
-            sell_price = self._market_manager.get_price(
+            sell_price = self._market_provider.get_price(
                 type_id, region_id, is_buy_order=False
             )
-            buy_price = self._market_manager.get_price(
+            buy_price = self._market_provider.get_price(
                 type_id, region_id, is_buy_order=True
             )
 
@@ -161,10 +163,10 @@ class MarketService:
             Dictionary with comprehensive market statistics
 
         """
-        sell_price = self._market_manager.get_price(
+        sell_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=False
         )
-        buy_price = self._market_manager.get_price(
+        buy_price = self._market_provider.get_price(
             type_id, region_id, is_buy_order=True
         )
 

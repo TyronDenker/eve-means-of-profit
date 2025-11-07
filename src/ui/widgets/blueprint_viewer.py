@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import BlueprintService, ManufacturingService
-from data.managers import SDEManager
+from data.providers import SDEProvider
 from models.eve import EveBlueprint
 from models.ui import BlueprintTableModel
 from utils import format_time
@@ -31,7 +31,7 @@ class BlueprintViewer(QWidget):
 
     def __init__(
         self,
-        sde_manager: SDEManager,
+        sde_provider: SDEProvider,
         blueprint_service: BlueprintService | None = None,
         manufacturing_service: ManufacturingService | None = None,
         parent=None,
@@ -39,14 +39,14 @@ class BlueprintViewer(QWidget):
         """Initialize the blueprint viewer.
 
         Args:
-            sde_manager: SDEManager instance for data access
+            sde_provider: SDEProvider instance for data access
             blueprint_service: BlueprintService for calculations
             manufacturing_service: ManufacturingService for manufacturing calcs
             parent: Parent widget
 
         """
         super().__init__(parent)
-        self._sde_manager = sde_manager
+        self._sde_provider = sde_provider
         self._blueprint_service = blueprint_service
         self._manufacturing_service = manufacturing_service
         self._current_blueprint: EveBlueprint | None = None
@@ -248,7 +248,7 @@ class BlueprintViewer(QWidget):
         logger.info("Loading blueprints...")
 
         try:
-            blueprints = self._sde_manager.get_all_blueprints()
+            blueprints = self._sde_provider.get_all_blueprints()
             logger.info(f"Loaded {len(blueprints)} blueprints")
 
             # Sort blueprints by ID
@@ -257,7 +257,7 @@ class BlueprintViewer(QWidget):
             # Add to combo box
             for bp in blueprints[:100]:  # Limit to first 100 for performance
                 # Try to get the blueprint type name
-                bp_type = self._sde_manager.get_type_by_id(bp.blueprint_type_id)
+                bp_type = self._sde_provider.get_type_by_id(bp.blueprint_type_id)
                 name = bp_type.name.en if bp_type else f"Blueprint {bp.id}"
                 self._blueprint_combo.addItem(name, bp)
 
@@ -347,7 +347,7 @@ class BlueprintViewer(QWidget):
 
         # Fetch type names
         for type_id in all_type_ids:
-            eve_type = self._sde_manager.get_type_by_id(type_id)
+            eve_type = self._sde_provider.get_type_by_id(type_id)
             if eve_type:
                 type_names[type_id] = eve_type.name.en
 

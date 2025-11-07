@@ -11,7 +11,7 @@ This service provides comprehensive manufacturing calculations including:
 import logging
 from typing import Any, TypedDict
 
-from data.managers import MarketDataManager, SDEManager
+from data.providers import MarketDataProvider, SDEProvider
 
 logger = logging.getLogger(__name__)
 
@@ -87,18 +87,18 @@ class ManufacturingService:
 
     def __init__(
         self,
-        sde_manager: SDEManager,
-        market_manager: MarketDataManager | None = None,
+        sde_provider: SDEProvider,
+        market_provider: MarketDataProvider | None = None,
     ):
         """Initialize the manufacturing service.
 
         Args:
-            sde_manager: SDEManager for blueprint and type data
-            market_manager: Optional MarketDataManager for price data
+            sde_provider: SDEProvider for blueprint and type data
+            market_provider: Optional MarketDataProvider for price data
 
         """
-        self._sde_manager = sde_manager
-        self._market_manager = market_manager
+        self._sde_provider = sde_provider
+        self._market_provider = market_provider
 
     def calculate_manufacturing_cost(
         self,
@@ -138,7 +138,7 @@ class ManufacturingService:
 
         """
         # Get blueprint
-        blueprint = self._sde_manager.get_blueprint_by_id(blueprint_id)
+        blueprint = self._sde_provider.get_blueprint_by_id(blueprint_id)
         if not blueprint or not blueprint.activities.manufacturing:
             logger.warning(f"Blueprint {blueprint_id} not found or no manufacturing")
             return None
@@ -179,7 +179,7 @@ class ManufacturingService:
                 base_quantity = material.quantity
 
                 # Get type name
-                eve_type = self._sde_manager.get_type_by_id(type_id)
+                eve_type = self._sde_provider.get_type_by_id(type_id)
                 type_name = eve_type.name.en if eve_type else f"Type {type_id}"
 
                 # Calculate adjusted quantities
@@ -198,8 +198,8 @@ class ManufacturingService:
 
                 # Get price
                 unit_price = 0.0
-                if self._market_manager:
-                    price_data = self._market_manager.get_price(
+                if self._market_provider:
+                    price_data = self._market_provider.get_price(
                         type_id, region_id, is_buy_order=False
                     )
                     if price_data:
@@ -326,12 +326,12 @@ class ManufacturingService:
             **kwargs,
         )
 
-        if not cost_breakdown or not self._market_manager:
+        if not cost_breakdown or not self._market_provider:
             return None
 
         # Get product sell price
         product_type_id = cost_breakdown["product_type_id"]
-        product_price = self._market_manager.get_price(
+        product_price = self._market_provider.get_price(
             product_type_id, region_id, is_buy_order=True
         )
 

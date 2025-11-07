@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core import ManufacturingService
-from data.managers import SDEManager
+from data.providers import SDEProvider
 from utils import format_time
 
 logger = logging.getLogger(__name__)
@@ -72,20 +72,20 @@ class ManufacturingWindow(QWidget):
 
     def __init__(
         self,
-        sde_manager: SDEManager,
+        sde_provider: SDEProvider,
         manufacturing_service: ManufacturingService,
         parent=None,
     ):
         """Initialize the manufacturing window.
 
         Args:
-            sde_manager: SDEManager instance for data access
+            sde_provider: SDEProvider instance for data access
             manufacturing_service: ManufacturingService for calculations
             parent: Parent widget
 
         """
         super().__init__(parent)
-        self._sde_manager = sde_manager
+        self._sde_provider = sde_provider
         self._manufacturing_service = manufacturing_service
         self._current_blueprint_id: int | None = None
         self._manufacturing_tree: dict = {}
@@ -326,7 +326,7 @@ class ManufacturingWindow(QWidget):
         logger.info("Loading blueprints for manufacturing window...")
 
         try:
-            blueprints = self._sde_manager.get_all_blueprints()
+            blueprints = self._sde_provider.get_all_blueprints()
             logger.info(f"Total blueprints loaded: {len(blueprints)}")
 
             # Filter to manufacturing OR reaction blueprints
@@ -351,7 +351,7 @@ class ManufacturingWindow(QWidget):
 
             # Build blueprint data with metadata
             for bp in valid_blueprints:
-                bp_type = self._sde_manager.get_type_by_id(bp.blueprint_type_id)
+                bp_type = self._sde_provider.get_type_by_id(bp.blueprint_type_id)
 
                 if not bp_type or not bp_type.name:
                     continue
@@ -366,7 +366,7 @@ class ManufacturingWindow(QWidget):
                 # Get product info
                 if bp.activities.manufacturing and bp.activities.manufacturing.products:
                     product_id = bp.activities.manufacturing.products[0].type_id
-                    product_type = self._sde_manager.get_type_by_id(product_id)
+                    product_type = self._sde_provider.get_type_by_id(product_id)
                     if product_type:
                         product_name = product_type.name.en
                         # Get meta level for T1/T2/T3 detection
@@ -374,7 +374,7 @@ class ManufacturingWindow(QWidget):
                             meta_level = product_type.meta_group_id or 0
                         # Get category
                         if product_type.group_id:
-                            group = self._sde_manager.get_group_by_id(
+                            group = self._sde_provider.get_group_by_id(
                                 product_type.group_id
                             )
                             if group:
@@ -383,7 +383,7 @@ class ManufacturingWindow(QWidget):
                 elif bp.activities.reaction and bp.activities.reaction.products:
                     is_reaction = True
                     product_id = bp.activities.reaction.products[0].type_id
-                    product_type = self._sde_manager.get_type_by_id(product_id)
+                    product_type = self._sde_provider.get_type_by_id(product_id)
                     if product_type:
                         product_name = product_type.name.en
 
@@ -729,7 +729,7 @@ class ManufacturingWindow(QWidget):
 
         """
         try:
-            blueprints = self._sde_manager.get_all_blueprints()
+            blueprints = self._sde_provider.get_all_blueprints()
 
             for bp in blueprints:
                 if not bp.activities.manufacturing:
@@ -758,7 +758,7 @@ class ManufacturingWindow(QWidget):
 
         """
         try:
-            bp = self._sde_manager.get_blueprint_by_id(bp_id)
+            bp = self._sde_provider.get_blueprint_by_id(bp_id)
             if (
                 bp
                 and bp.activities.manufacturing
@@ -778,7 +778,7 @@ class ManufacturingWindow(QWidget):
         summary_lines.append("")
 
         # Product info
-        product_type = self._sde_manager.get_type_by_id(breakdown["product_type_id"])
+        product_type = self._sde_provider.get_type_by_id(breakdown["product_type_id"])
         if product_type:
             summary_lines.append(f"<b>Product:</b> {product_type.name.en}")
         summary_lines.append(
@@ -825,7 +825,7 @@ class ManufacturingWindow(QWidget):
         summary_lines.append("")
 
         # Product info
-        product_type = self._sde_manager.get_type_by_id(breakdown["product_type_id"])
+        product_type = self._sde_provider.get_type_by_id(breakdown["product_type_id"])
         if product_type:
             summary_lines.append(f"<b>Product:</b> {product_type.name.en}")
         summary_lines.append(
@@ -902,7 +902,7 @@ class ManufacturingWindow(QWidget):
         breakdown = tree["breakdown"]
 
         # Get product name
-        product_type = self._sde_manager.get_type_by_id(breakdown["product_type_id"])
+        product_type = self._sde_provider.get_type_by_id(breakdown["product_type_id"])
         product_name = (
             product_type.name.en
             if product_type
@@ -938,7 +938,7 @@ class ManufacturingWindow(QWidget):
 
             if not has_child:
                 # This is a bought material
-                mat_type = self._sde_manager.get_type_by_id(material["type_id"])
+                mat_type = self._sde_provider.get_type_by_id(material["type_id"])
                 mat_name = (
                     mat_type.name.en if mat_type else f"Type {material['type_id']}"
                 )

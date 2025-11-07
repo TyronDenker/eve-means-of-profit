@@ -274,9 +274,9 @@ def test_handles_invalid_input():
 
 #### Critical (Must Have)
 
-1. **Data Loaders** (`src/data/loaders/`) - Parse SDE/CSV correctly
+1. **Data Parsers** (`src/data/parsers/`) - Parse SDE/CSV correctly
 2. **Core Services** (`src/core/`) - Manufacturing costs, calculations
-3. **Data Managers** (`src/data/managers/`) - Caching, lookups
+3. **Data Providers** (`src/data/providers/`) - Caching, lookups
 
 #### Important (Should Have)
 

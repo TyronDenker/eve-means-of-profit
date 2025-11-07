@@ -1,9 +1,9 @@
 """Data management for EVE Online SDE."""
 
-from .loaders import SDEJsonlLoader
-from .managers import SDEManager
+from .parsers import SDEJsonlParser
+from .providers import SDEProvider
 
 __all__ = [
-    "SDEJsonlLoader",
-    "SDEManager",
+    "SDEJsonlParser",
+    "SDEProvider",
 ]

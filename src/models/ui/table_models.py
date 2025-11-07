@@ -7,11 +7,11 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QVariant
 from models.eve import EveType
 from utils import format_currency, format_mass, format_number, format_volume
 
-# Optional import for market data manager
+# Optional import for market data provider
 try:
-    from data.managers import MarketDataManager
+    from data.providers import MarketDataProvider
 except ImportError:
-    MarketDataManager = None  # type: ignore
+    MarketDataProvider = None  # type: ignore
 
 
 class TypesTableModel(QAbstractTableModel):
@@ -32,20 +32,20 @@ class TypesTableModel(QAbstractTableModel):
     def __init__(
         self,
         types: list[EveType] | None = None,
-        market_manager: Any | None = None,
+        market_provider: Any | None = None,
         region_id: int = 10000002,
     ):
         """Initialize the model.
 
         Args:
             types: List of EveType objects to display
-            market_manager: Optional MarketDataManager for price data
+            market_provider: Optional MarketDataProvider for price data
             region_id: Region ID for market prices (default: The Forge)
 
         """
         super().__init__()
         self._types = types or []
-        self._market_manager = market_manager
+        self._market_provider = market_provider
         self._region_id = region_id
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
@@ -115,10 +115,10 @@ class TypesTableModel(QAbstractTableModel):
             Formatted price string or "N/A"
 
         """
-        if self._market_manager is None:
+        if self._market_provider is None:
             return "N/A"
 
-        price = self._market_manager.get_price(type_id, self._region_id, is_buy_order)
+        price = self._market_provider.get_price(type_id, self._region_id, is_buy_order)
         if price is None:
             return "N/A"
 
@@ -153,14 +153,14 @@ class TypesTableModel(QAbstractTableModel):
         self._types = types
         self.endResetModel()
 
-    def set_market_manager(self, market_manager: Any) -> None:
-        """Set the market manager and refresh display.
+    def set_market_provider(self, market_provider: Any) -> None:
+        """Set the market provider and refresh display.
 
         Args:
-            market_manager: MarketDataManager instance
+            market_provider: MarketDataProvider instance
 
         """
-        self._market_manager = market_manager
+        self._market_provider = market_provider
         # Refresh the market price columns
         if len(self._types) > 0:
             top_left = self.index(0, 6)  # market_sell column

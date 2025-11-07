@@ -1,9 +1,9 @@
-"""SDE Manager for high-level data access and caching."""
+"""SDE Provider for high-level data access and caching."""
 
 import logging
 from collections import defaultdict
 
-from data.loaders.sde_jsonl import SDEJsonlLoader
+from data.parsers.sde_jsonl import SDEJsonlParser
 from models.eve import (
     EveBlueprint,
     EveCategory,
@@ -20,23 +20,23 @@ from models.eve import (
 logger = logging.getLogger(__name__)
 
 
-class SDEManager:
-    """Manager for SDE data with caching and optimized query capabilities.
+class SDEProvider:
+    """Provider for SDE data with caching and optimized query capabilities.
 
-    This manager provides:
+    This provider provides:
     - Primary caches: Direct ID lookups (O(1))
     - Index hashmaps: Fast filtered queries (O(1) for common filters)
     - Memory management: Clear caches when needed
     """
 
-    def __init__(self, loader: SDEJsonlLoader):
-        """Initialize the SDE manager.
+    def __init__(self, parser: SDEJsonlParser):
+        """Initialize the SDE provider.
 
         Args:
-            loader: SDEJsonlLoader instance for loading SDE data.
+            parser: SDEJsonlParser instance for loading SDE data.
 
         """
-        self._loader = loader
+        self._parser = parser
 
         # Primary caches - ID-based lookups (dict[id, object])
         self._types_cache: dict[int, EveType] | None = None
@@ -65,7 +65,7 @@ class SDEManager:
         """Load and cache all types."""
         if self._types_cache is None:
             logger.info("Loading types from SDE...")
-            self._types_cache = {t.id: t for t in self._loader.load_types()}
+            self._types_cache = {t.id: t for t in self._parser.load_types()}
             logger.info(f"Loaded {len(self._types_cache)} types")
             self._build_type_indices()
         return self._types_cache
@@ -125,7 +125,7 @@ class SDEManager:
         if self._blueprints_cache is None:
             logger.info("Loading blueprints from SDE...")
             self._blueprints_cache = {
-                bp.id: bp for bp in self._loader.load_blueprints()
+                bp.id: bp for bp in self._parser.load_blueprints()
             }
             logger.info(f"Loaded {len(self._blueprints_cache)} blueprints")
         return self._blueprints_cache
@@ -134,7 +134,7 @@ class SDEManager:
         """Load and cache all categories."""
         if self._categories_cache is None:
             logger.info("Loading categories from SDE...")
-            self._categories_cache = {c.id: c for c in self._loader.load_categories()}
+            self._categories_cache = {c.id: c for c in self._parser.load_categories()}
             logger.info(f"Loaded {len(self._categories_cache)} categories")
         return self._categories_cache
 
@@ -142,7 +142,7 @@ class SDEManager:
         """Load and cache all groups."""
         if self._groups_cache is None:
             logger.info("Loading groups from SDE...")
-            self._groups_cache = {g.id: g for g in self._loader.load_groups()}
+            self._groups_cache = {g.id: g for g in self._parser.load_groups()}
             logger.info(f"Loaded {len(self._groups_cache)} groups")
             self._build_group_indices()
         return self._groups_cache
@@ -174,7 +174,7 @@ class SDEManager:
         if self._market_groups_cache is None:
             logger.info("Loading market groups from SDE...")
             self._market_groups_cache = {
-                mg.id: mg for mg in self._loader.load_market_groups()
+                mg.id: mg for mg in self._parser.load_market_groups()
             }
             logger.info(f"Loaded {len(self._market_groups_cache)} market groups")
         return self._market_groups_cache
@@ -184,7 +184,7 @@ class SDEManager:
         if self._type_materials_cache is None:
             logger.info("Loading type materials from SDE...")
             self._type_materials_cache = {
-                tm.id: tm for tm in self._loader.load_type_materials()
+                tm.id: tm for tm in self._parser.load_type_materials()
             }
             logger.info(f"Loaded {len(self._type_materials_cache)} type materials")
         return self._type_materials_cache
@@ -194,7 +194,7 @@ class SDEManager:
         if self._dogma_attributes_cache is None:
             logger.info("Loading dogma attributes from SDE...")
             self._dogma_attributes_cache = {
-                da.id: da for da in self._loader.load_dogma_attributes()
+                da.id: da for da in self._parser.load_dogma_attributes()
             }
             logger.info(f"Loaded {len(self._dogma_attributes_cache)} dogma attrs")
         return self._dogma_attributes_cache
@@ -204,7 +204,7 @@ class SDEManager:
         if self._dogma_effects_cache is None:
             logger.info("Loading dogma effects from SDE...")
             self._dogma_effects_cache = {
-                de.id: de for de in self._loader.load_dogma_effects()
+                de.id: de for de in self._parser.load_dogma_effects()
             }
             logger.info(f"Loaded {len(self._dogma_effects_cache)} dogma effects")
         return self._dogma_effects_cache
@@ -214,7 +214,7 @@ class SDEManager:
         if self._dogma_units_cache is None:
             logger.info("Loading dogma units from SDE...")
             self._dogma_units_cache = {
-                du.id: du for du in self._loader.load_dogma_units()
+                du.id: du for du in self._parser.load_dogma_units()
             }
             logger.info(f"Loaded {len(self._dogma_units_cache)} dogma units")
         return self._dogma_units_cache
@@ -226,7 +226,7 @@ class SDEManager:
         if self._dogma_attr_categories_cache is None:
             logger.info("Loading dogma attribute categories from SDE...")
             self._dogma_attr_categories_cache = {
-                dac.id: dac for dac in self._loader.load_dogma_attribute_categories()
+                dac.id: dac for dac in self._parser.load_dogma_attribute_categories()
             }
             logger.info(
                 f"Loaded {len(self._dogma_attr_categories_cache)} dogma attr categories"

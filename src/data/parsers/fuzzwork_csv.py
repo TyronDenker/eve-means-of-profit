@@ -1,4 +1,4 @@
-"""Fuzzwork market data CSV loader for EVE Online market prices."""
+"""Fuzzwork market data CSV parser for EVE Online market prices."""
 
 import csv
 import logging
@@ -11,11 +11,11 @@ from utils.config import Config
 logger = logging.getLogger(__name__)
 
 
-class FuzzworkCSVLoader:
-    """Loader for Fuzzwork aggregate market data CSV files."""
+class FuzzworkCSVParser:
+    """Parser for Fuzzwork aggregate market data CSV files."""
 
     def __init__(self, base_path: Path | str | None = None):
-        """Initialize the loader with a base path to Fuzzwork data.
+        """Initialize the parser with a base path to Fuzzwork data.
 
         Args:
             base_path: Path to the Fuzzwork data directory.

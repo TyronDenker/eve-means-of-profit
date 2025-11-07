@@ -1,4 +1,4 @@
-"""SDE JSONL data loader for EVE Online static data."""
+"""SDE JSONL data parser for EVE Online static data."""
 
 import logging
 from collections.abc import Iterator
@@ -89,11 +89,11 @@ FIELD_NAME_MAP = {
 }
 
 
-class SDEJsonlLoader:
-    """Loader for SDE JSONL files with lazy loading capabilities."""
+class SDEJsonlParser:
+    """Parser for SDE JSONL files with lazy loading capabilities."""
 
     def __init__(self, base_path: Path | str | None = None):
-        """Initialize the loader with a base path to SDE data.
+        """Initialize the parser with a base path to SDE data.
 
         Args:
             base_path: Path to the SDE data directory. If None, uses Config.SDE_PATH

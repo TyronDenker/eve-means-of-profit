@@ -19,7 +19,7 @@ import httpx
 from authlib.integrations.httpx_client import OAuth2Client
 
 
-class TokenManager:
+class TokenProvider:
     """
     Manages OAuth2 tokens for ESI API access.
 
@@ -38,7 +38,7 @@ class TokenManager:
         token_file: str | Path | None = None,
     ):
         """
-        Initialize token manager.
+        Initialize token provider.
 
         Args:
             client_id: ESI application client ID

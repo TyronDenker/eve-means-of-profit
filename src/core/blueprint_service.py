@@ -7,7 +7,7 @@ including cost calculations and profit analysis for manufacturing.
 import logging
 from typing import Any
 
-from data.managers import MarketDataManager, SDEManager
+from data.providers import MarketDataProvider, SDEProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,18 +21,18 @@ class BlueprintService:
 
     def __init__(
         self,
-        sde_manager: SDEManager,
-        market_manager: MarketDataManager | None = None,
+        sde_provider: SDEProvider,
+        market_provider: MarketDataProvider | None = None,
     ):
         """Initialize the blueprint service.
 
         Args:
-            sde_manager: SDEManager for blueprint and type data
-            market_manager: Optional MarketDataManager for price data
+            sde_provider: SDEProvider for blueprint and type data
+            market_provider: Optional MarketDataProvider for price data
 
         """
-        self._sde_manager = sde_manager
-        self._market_manager = market_manager
+        self._sde_provider = sde_provider
+        self._market_provider = market_provider
 
     def calculate_material_costs(
         self,
@@ -51,7 +51,7 @@ class BlueprintService:
             Dictionary with material costs breakdown or None
 
         """
-        blueprint = self._sde_manager.get_blueprint_by_id(blueprint_id)
+        blueprint = self._sde_provider.get_blueprint_by_id(blueprint_id)
         if not blueprint:
             logger.warning(f"Blueprint {blueprint_id} not found")
             return None
@@ -65,8 +65,8 @@ class BlueprintService:
         activity_data = activities[activity]
         materials = activity_data.get("materials", [])
 
-        if not self._market_manager:
-            logger.info("No market manager, returning material list only")
+        if not self._market_provider:
+            logger.info("No market provider, returning material list only")
             return {
                 "materials": materials,
                 "total_cost": None,
@@ -85,7 +85,7 @@ class BlueprintService:
                 continue
 
             # Get material price
-            price_data = self._market_manager.get_price(
+            price_data = self._market_provider.get_price(
                 type_id, region_id, is_buy_order=False
             )
 
@@ -146,8 +146,8 @@ class BlueprintService:
             Dictionary with profit analysis or None
 
         """
-        blueprint = self._sde_manager.get_blueprint_by_id(blueprint_id)
-        if not blueprint or not self._market_manager:
+        blueprint = self._sde_provider.get_blueprint_by_id(blueprint_id)
+        if not blueprint or not self._market_provider:
             return None
 
         # Get manufacturing data
@@ -181,7 +181,7 @@ class BlueprintService:
         total_cost = cost_per_run * runs
 
         # Get product price
-        product_price = self._market_manager.get_price(
+        product_price = self._market_provider.get_price(
             product_type_id, region_id, is_buy_order=False
         )
 

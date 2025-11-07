@@ -1,31 +1,31 @@
-"""Market data manager for high-level market price access and caching."""
+"""Market data provider for high-level market price access and caching."""
 
 import logging
 from collections import defaultdict
 
-from data.loaders.fuzzwork_csv import FuzzworkCSVLoader
+from data.parsers.fuzzwork_csv import FuzzworkCSVParser
 from models.eve import MarketPrice
 
 logger = logging.getLogger(__name__)
 
 
-class MarketDataManager:
-    """Manager for market data with caching and optimized query capabilities.
+class MarketDataProvider:
+    """Provider for market data with caching and optimized query capabilities.
 
-    This manager provides:
+    This provider provides:
     - Primary caches: Direct lookups by type/region/order type
     - Index hashmaps: Fast filtered queries
     - Price retrieval methods for buy/sell orders
     """
 
-    def __init__(self, loader: FuzzworkCSVLoader):
-        """Initialize the market data manager.
+    def __init__(self, parser: FuzzworkCSVParser):
+        """Initialize the market data provider.
 
         Args:
-            loader: FuzzworkCSVLoader instance for loading market data.
+            parser: FuzzworkCSVParser instance for loading market data.
 
         """
-        self._loader = loader
+        self._parser = parser
 
         # Primary cache - all market prices by composite key
         # Key format: (type_id, region_id, is_buy_order)
@@ -43,7 +43,7 @@ class MarketDataManager:
             logger.info("Loading market prices from Fuzzwork data...")
             self._prices_cache = {}
 
-            for price in self._loader.load_market_prices():
+            for price in self._parser.load_market_prices():
                 key = (price.type_id, price.region_id, price.is_buy_order)
                 self._prices_cache[key] = price
 
