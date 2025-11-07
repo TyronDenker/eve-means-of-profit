@@ -107,18 +107,9 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 ## Data Sources
 
 - **SDE (Static Data Export)**: EVE's official game data in JSONL format (`data/sde/`)
-- **ESI (EVE Swagger Interface)**: User and game data API (not yet integrated)
+- **ESI (EVE Swagger Interface)**: User and game data API (`https://esi.evetech.net/latest/`)
 - **Fuzzwork Market Data**: Market prices CSV (`data/fuzzwork/aggregatecsv.csv`)
 
 ## License
 
 This project is licensed under the GNU General Public License v3.0. See the [LICENSE.md](LICENSE.md) file for details.
-
-## Known Issues
-
-- Manufacturing cost calculations use approximations for Estimated Item Value (EIV)
-- System Cost Index (SCI) is manually configured, not fetched from ESI
-- Alpha clone tax logic may not match in-game exactly
-- Market data is static (CSV), not real-time
-- SDE data is loaded from local files, not updated automatically
-See [TECHNICAL_SPECS.md](TECHNICAL_SPECS.md) for a detailed list of known technical debt and missing features.

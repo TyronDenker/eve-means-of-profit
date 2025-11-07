@@ -93,22 +93,6 @@ REM Run all checks via pre-commit
 uv run pre-commit run --all-files
 ```
 
-### IDE Setup
-
-#### VS Code (Recommended)
-
-1. Install extensions:
-   - [Ruff](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff)
-   - [ty](https://marketplace.visualstudio.com/items?itemName=astral-sh.ty)
-2. Enable format-on-save in settings
-
-#### PyCharm
-
-1. Add Ruff as external tool
-2. Configure file watcher for auto-formatting
-
----
-
 ## Code Quality Standards
 
 ### Automated Enforcement
@@ -123,13 +107,13 @@ Quality checks run automatically via:
 
 **Ruff** - Linting, formatting, import sorting
 **ty** - Type checking (preview, non-blocking)
-**pytest** - Tests with 60% minimum coverage
+**pytest** - All tests passing with coverage report
 **pip-audit** - Security vulnerability scanning
 **Standard hooks** - Trailing whitespace, YAML syntax, etc.
 
 ### Code Style Rules
 
-- **Line length**: 100 characters
+- **Line length**: 88 characters
 - **Quotes**: Double quotes (`"`)
 - **Imports**: Sorted by Ruff's `I` rule (isort compatible)
 - **Type hints**: Encouraged, checked by ty
@@ -277,6 +261,7 @@ def test_handles_invalid_input():
 1. **Data Parsers** (`src/data/parsers/`) - Parse SDE/CSV correctly
 2. **Core Services** (`src/core/`) - Manufacturing costs, calculations
 3. **Data Providers** (`src/data/providers/`) - Caching, lookups
+4. **Data Clients** (`src/data/clients/`) - ESI interactions
 
 #### Important (Should Have)
 
@@ -287,51 +272,9 @@ def test_handles_invalid_input():
 
 1. **UI Components** (`src/ui/`) - Manual testing is fine for MVP
 
-### Testing Recipes
-
-See our reference implementation: `tests/test_utils/test_jsonl_parser.py`
-
-- 53 tests
-- 100% coverage
-- Demonstrates all patterns above
-
-### Coverage Requirements
-
-- **Minimum**: 60% overall coverage (enforced in CI)
-- **Target**: 70%+ for `src/core/` (business logic)
-- **Not required**: 100% coverage (focus on critical paths)
-
 ---
 
 ## Pull Request Workflow
-
-### Creating a PR
-
-1. **Create feature branch**
-
-   ```cmd
-   git checkout -b feature/my-awesome-feature
-   ```
-
-2. **Make changes and commit**
-
-   ```cmd
-   REM Pre-commit hooks run automatically
-   git add .
-   git commit -m "Add awesome feature"
-   ```
-
-3. **Push to GitHub**
-
-   ```cmd
-   git push origin feature/my-awesome-feature
-   ```
-
-4. **Open PR** on GitHub
-   - Navigate to repository
-   - Click "Pull requests" → "New pull request"
-   - Select your branch
-   - Fill in description
 
 ### PR Requirements
 
@@ -342,7 +285,7 @@ Before merging, ensure:
 - Type checking passes (ty)
 - Tests pass with adequate coverage (≥60%)
 - No merge conflicts with main
-- At least one review (if team policy requires)
+- At least one review
 
 ### Fixing Failed Checks
 
@@ -352,6 +295,12 @@ If CI fails:
 2. Run checks locally to reproduce
 3. Fix issues and commit
 4. Push changes (CI re-runs automatically)
+
+### Merging a PR
+
+- Utilize `rebase` while working on feature branches in order to maintain a clean history that explains the parts of your contribution.
+- Squash should not be used in order to maintain individual commit history.
+- Deciding if a `rebase` is required before merging should be determined by the reviewer.
 
 ```cmd
 REM Fix all linting and formatting issues
@@ -393,16 +342,7 @@ The GitHub Actions workflow runs on:
 
 3. **Test Suite** (pytest)
    - All unit tests
-   - Coverage report (≥60% required)
-   - Uploads to Codecov (if configured)
-
-4. **Security Audit** (pip-audit)
-   - Dependency vulnerability scanning
-   - Currently non-blocking
-
-5. **Build Check**
-   - Verifies package builds correctly
-   - Only runs if other jobs pass
+   - Coverage report
 
 ### Viewing Results
 
@@ -410,20 +350,6 @@ The GitHub Actions workflow runs on:
 - Click on workflow run
 - Each job shows detailed logs
 - Download artifacts (coverage reports, builds)
-
----
-
-## Branch Protection
-
-Configure in GitHub: Settings → Branches → Add rule for `main`
-
-Enable:
-
-- Require pull request before merging
-- Require status checks to pass
-- Select: `ruff`, `type-check`, `test`, `security`
-- Require branches to be up to date
-- Do not allow bypassing
 
 ---
 
@@ -435,23 +361,15 @@ Enable:
 REM Reinstall hooks
 pre-commit uninstall
 pre-commit install
-
-REM Update hook versions
-pre-commit autoupdate
 ```
 
 ### CI passes locally but fails on GitHub
 
 - Check Python version (must be 3.13+)
 - Ensure dependencies are up to date
-- Clear pip cache: `pip cache purge`
+- Clear pip cache: `pip cache purge` or `uv sync --force`
 - Check for platform differences (Windows vs Linux)
-
-### Coverage too low
-
-- Write more tests (see [Testing Guide](#testing-guide))
-- Focus on critical paths first
-- Adjust threshold in `pyproject.toml` if needed (temporarily)
+ Focus on critical paths first
 
 ### Ruff or ty not found
 
