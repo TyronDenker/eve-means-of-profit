@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from models.eve import MarketPrice
-from utils.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -14,21 +13,16 @@ logger = logging.getLogger(__name__)
 class FuzzworkCSVParser:
     """Parser for Fuzzwork aggregate market data CSV files."""
 
-    def __init__(self, base_path: Path | str | None = None):
-        """Initialize the parser with a base path to Fuzzwork data.
+    def __init__(self, data_path: Path | str):
+        """Initialize the parser with the Fuzzwork data path.
 
         Args:
-            base_path: Path to the Fuzzwork data directory.
-                      If None, uses Config.DATA_PATH / 'fuzzwork'
-
+            data_path: Path to the Fuzzwork data directory
         """
-        if base_path is None:
-            self.base_path = Config.DATA_PATH / "fuzzwork"
-        else:
-            self.base_path = Path(base_path)
+        self.file_path = Path(data_path)
 
-        if not self.base_path.exists():
-            logger.warning(f"Fuzzwork data path does not exist: {self.base_path}")
+        if not self.file_path.exists():
+            logger.warning(f"Fuzzwork data path does not exist: {self.file_path}")
 
     def _parse_what_field(self, what: str) -> tuple[int, int, bool] | None:
         """Parse the 'what' field from Fuzzwork CSV.
@@ -109,7 +103,7 @@ class FuzzworkCSVParser:
             FileNotFoundError: If the CSV file doesn't exist
 
         """
-        file_path = self.base_path / filename
+        file_path = self.file_path / filename
 
         if not file_path.exists():
             error_msg = f"Market data file not found: {file_path}"
