@@ -29,14 +29,12 @@ class ESIClient:
     rate limiting, and token refresh.
     """
 
-    BASE_URL = "https://esi.evetech.net/latest"
-    USER_AGENT = "eve-means-of-profit/0.1.0 (tyronevedenker@gmail.com; +https://github.com/TyronDenker/eve-means-of-profit; discord:tyrondenker; eve:Tyron Denker)"
-
     def __init__(
         self,
         client_id: str,
         token_file: str | Path,
         cache_dir: str | Path,
+        base_url: str,
         user_agent: str,
         rate_limit_threshold: int = 10,
     ):
@@ -52,6 +50,7 @@ class ESIClient:
         """
         self.client_id = client_id
         self.user_agent = user_agent
+        self.base_url = base_url
 
         # Initialize components with provided config values
         self.token_provider = TokenProvider(
@@ -120,7 +119,7 @@ class ESIClient:
         await self.rate_limiter.acquire()
 
         # Build request
-        url = f"{self.BASE_URL}{path}"
+        url = f"{self.base_url}{path}"
         headers = {}
 
         # Add ETag header if available
@@ -193,7 +192,7 @@ class ESIClient:
         await self.rate_limiter.acquire()
 
         # Build request
-        url = f"{self.BASE_URL}{path}"
+        url = f"{self.base_url}{path}"
         headers = {"Content-Type": "application/json"}
 
         # Add authentication
