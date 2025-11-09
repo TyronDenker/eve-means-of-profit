@@ -1,12 +1,14 @@
 """EVE Online market price data models."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
-class MarketPrice(BaseModel):
+class EVEMarketPrice(BaseModel):
     """Represents market price data for an EVE type in a specific region.
 
-    Data sourced from Fuzzwork's aggregate market data.
+    Data sourced from Fuzzwork's aggregate market data or ESI API.
     The 'what' field format is: regionID|typeID|isBuyOrder
     """
 
@@ -28,6 +30,50 @@ class MarketPrice(BaseModel):
         ..., description="5th percentile price (best 5% of orders)"
     )
     order_set: int = Field(..., description="Order set identifier (usually region ID)")
+
+    @classmethod
+    def from_esi(cls, data: dict[str, Any]) -> "EVEMarketPrice":
+        """Create MarketPrice from ESI API response.
+
+        Args:
+            data: Raw dictionary from ESI /markets/prices/ endpoint
+
+        Returns:
+            MarketPrice instance
+
+        Example ESI response:
+            {
+                "adjusted_price": 123456.78,
+                "average_price": 654321.12,
+                "type_id": 34
+            }
+
+        Note: ESI /markets/prices/ returns simple price data.
+        This method creates a MarketPrice with sensible defaults
+        for fields not provided by ESI.
+        """
+        # ESI market prices don't have region/order type info
+        # Use average_price as the primary price metric
+        average_price = data.get("average_price", 0.0)
+        adjusted_price = data.get("adjusted_price", 0.0)
+
+        # Use average_price as the main price, fallback to adjusted
+        price = average_price if average_price > 0 else adjusted_price
+
+        return cls(
+            type_id=data["type_id"],
+            region_id=0,  # ESI prices are global
+            is_buy_order=False,  # ESI prices aren't order-specific
+            weighted_average=price,
+            max_val=price,
+            min_val=price,
+            std_dev=0.0,
+            median=price,
+            volume=0.0,
+            num_orders=0,
+            five_percent=price,
+            order_set=0,
+        )
 
     def __str__(self) -> str:
         """Return string representation of market price."""
