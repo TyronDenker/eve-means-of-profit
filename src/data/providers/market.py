@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 
 from data.parsers.fuzzwork_csv import FuzzworkCSVParser
-from models.eve import MarketPrice
+from models.eve import EVEMarketPrice
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class MarketDataProvider:
 
         # Primary cache - all market prices by composite key
         # Key format: (type_id, region_id, is_buy_order)
-        self._prices_cache: dict[tuple[int, int, bool], MarketPrice] | None = None
+        self._prices_cache: dict[tuple[int, int, bool], EVEMarketPrice] | None = None
 
         # Index hashmaps for fast queries
         # Type ID -> list of MarketPrice keys
@@ -37,7 +37,7 @@ class MarketDataProvider:
         # Region ID -> list of MarketPrice keys
         self._prices_by_region_index: dict[int, list[tuple[int, int, bool]]] = {}
 
-    def _load_prices(self) -> dict[tuple[int, int, bool], MarketPrice]:
+    def _load_prices(self) -> dict[tuple[int, int, bool], EVEMarketPrice]:
         """Load and cache all market prices."""
         if self._prices_cache is None:
             logger.info("Loading market prices from Fuzzwork data...")
@@ -92,7 +92,7 @@ class MarketDataProvider:
         type_id: int,
         region_id: int,
         is_buy_order: bool = False,
-    ) -> MarketPrice | None:
+    ) -> EVEMarketPrice | None:
         """Get a specific market price by type, region, and order type.
 
         Args:
@@ -179,7 +179,7 @@ class MarketDataProvider:
         type_id: int,
         region_id: int | None = None,
         is_buy_order: bool | None = None,
-    ) -> list[MarketPrice]:
+    ) -> list[EVEMarketPrice]:
         """Get all market prices for a specific type.
 
         Args:
@@ -210,7 +210,7 @@ class MarketDataProvider:
 
     def get_all_prices_for_region(
         self, region_id: int, is_buy_order: bool | None = None
-    ) -> list[MarketPrice]:
+    ) -> list[EVEMarketPrice]:
         """Get all market prices for a specific region.
 
         Args:

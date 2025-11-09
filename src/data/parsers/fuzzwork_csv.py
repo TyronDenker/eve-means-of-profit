@@ -5,7 +5,7 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 
-from models.eve import MarketPrice
+from models.eve import EVEMarketPrice
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class FuzzworkCSVParser:
 
     def load_market_prices(
         self, filename: str = "aggregatecsv.csv"
-    ) -> Iterator[MarketPrice]:
+    ) -> Iterator[EVEMarketPrice]:
         """Load market prices from Fuzzwork aggregate CSV.
 
         CSV Format:
@@ -130,7 +130,7 @@ class FuzzworkCSVParser:
                         region_id, type_id, is_buy_order = what_parsed
 
                         # Build MarketPrice object with safe parsing
-                        price = MarketPrice(
+                        price = EVEMarketPrice(
                             type_id=type_id,
                             region_id=region_id,
                             is_buy_order=is_buy_order,
