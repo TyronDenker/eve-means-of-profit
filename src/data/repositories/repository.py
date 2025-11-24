@@ -4,6 +4,8 @@ This module provides a single, centralized repository for managing:
 - Database connections and schema initialization
 - Asset tracking and history
 - Market price tracking
+- Net worth snapshots
+- Wallet transactions, contracts, industry jobs
 - Future data storage needs
 
 The repository pattern consolidates all database operations while keeping
