@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class NetWorthSnapshot(BaseModel):
@@ -27,6 +27,20 @@ class NetWorthSnapshot(BaseModel):
     industry_job_value: float = Field(
         ..., ge=0, description="Estimated output value of active jobs"
     )
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def total_net_worth(self) -> float:
+        """Calculate total net worth from all components."""
+        return (
+            self.wallet_balance
+            + self.market_escrow
+            + self.market_sell_value
+            + self.contract_collateral
+            + self.contract_value
+            + self.total_asset_value
+            + self.industry_job_value
+        )
 
 
 class AssetSnapshot(BaseModel):
