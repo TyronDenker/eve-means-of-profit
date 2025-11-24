@@ -1,0 +1,12 @@
+{
+    // Use the project's virtual environment so VS Code tests run with the same interpreter
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+    // Ensure the test runner uses the venv's pytest executable
+    "python.testing.pytestPath": "${workspaceFolder}\\.venv\\Scripts\\pytest.exe",
+    "python.testing.pytestArgs": [
+        "--cov=src",
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}

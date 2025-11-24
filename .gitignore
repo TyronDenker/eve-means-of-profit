@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Test coverage reports
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv
+
+# Project-specific ignores
+/data/
+.env*
+*.log
