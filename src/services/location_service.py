@@ -16,6 +16,8 @@ from models.app import LocationInfo
 from utils.config import get_config
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from data import SDEProvider
     from data.clients import ESIClient
 
@@ -46,6 +48,7 @@ class LocationService:
         esi_client: ESIClient,
         sde_provider: SDEProvider,
         cache_dir: str | Path | None = None,
+        settings_manager: Any | None = None,
     ):
         """Initialize location service.
 
@@ -53,15 +56,17 @@ class LocationService:
             esi_client: ESI client for API requests
             sde_provider: SDE provider for NPC station lookups
             cache_dir: Directory for cache storage (user data directory)
+            settings_manager: Settings manager for custom location names
         """
         self._client = esi_client
         self._sde = sde_provider
+        self._settings = settings_manager
         self._cache_file = get_config().app.user_data_dir / self.CACHE_FILE
 
         # In-memory cache: location_id -> LocationInfo
         self._cache: dict[int, LocationInfo] = {}
 
-        # In-memory custom names are stored on the same cache entries as LocationInfo
+        # Load location cache and apply custom names from settings
         self._load_cache()
 
         # Track which structures we've attempted to fetch (to avoid repeated failures)
@@ -71,35 +76,55 @@ class LocationService:
         self._cache_lock = asyncio.Lock()
 
     def _load_cache(self) -> None:
-        """Load location cache from disk."""
+        """Load location cache from disk and apply custom names from settings."""
         if not self._cache_file.exists():
             logger.debug("No location cache file found")
-            return
+        else:
+            try:
+                with open(self._cache_file, encoding="utf-8") as f:
+                    data = json.load(f)
 
-        try:
-            with open(self._cache_file, encoding="utf-8") as f:
-                data = json.load(f)
+                for entry in data.get("locations", []):
+                    try:
+                        loc = LocationInfo(
+                            location_id=entry["location_id"],
+                            name=entry["name"],
+                            category=entry["category"],
+                            last_checked=datetime.fromisoformat(entry["last_checked"]),
+                            owner_id=entry.get("owner_id"),
+                            custom_name=None,  # Will be loaded from SettingsManager below
+                            is_placeholder=entry.get("is_placeholder", False),
+                        )
+                        # Don't load placeholders from cache - they'll be re-resolved
+                        if not loc.is_placeholder:
+                            self._cache[loc.location_id] = loc
+                    except (KeyError, ValueError) as e:
+                        logger.debug("Skipping invalid cache entry: %s", e)
 
-            for entry in data.get("locations", []):
-                try:
-                    loc = LocationInfo(
-                        location_id=entry["location_id"],
-                        name=entry["name"],
-                        category=entry["category"],
-                        last_checked=datetime.fromisoformat(entry["last_checked"]),
-                        owner_id=entry.get("owner_id"),
-                        custom_name=entry.get("custom_name"),
-                        is_placeholder=entry.get("is_placeholder", False),
+                logger.info("Loaded %d locations from cache", len(self._cache))
+            except Exception as e:
+                logger.warning("Failed to load location cache: %s", e)
+
+        # Apply custom names from SettingsManager (source of truth)
+        if self._settings:
+            custom_locations = self._settings.get_all_custom_locations()
+            for location_id, custom_name in custom_locations.items():
+                if location_id in self._cache:
+                    self._cache[location_id].custom_name = custom_name
+                else:
+                    # Create placeholder entry for custom-named location not yet cached
+                    self._cache[location_id] = LocationInfo(
+                        location_id=location_id,
+                        name=custom_name,
+                        category="structure",
+                        last_checked=datetime.now(UTC),
+                        owner_id=None,
+                        custom_name=custom_name,
+                        is_placeholder=True,
                     )
-                    # Don't load placeholders from cache - they'll be re-resolved
-                    if not loc.is_placeholder:
-                        self._cache[loc.location_id] = loc
-                except (KeyError, ValueError) as e:
-                    logger.debug("Skipping invalid cache entry: %s", e)
-
-            logger.info("Loaded %d locations from cache", len(self._cache))
-        except Exception:
-            logger.exception("Failed to load location cache")
+            logger.debug(
+                "Applied %d custom location names from settings", len(custom_locations)
+            )
 
     def _save_cache(self) -> None:
         """Save location cache to disk."""
@@ -112,7 +137,7 @@ class LocationService:
                         "category": loc.category,
                         "last_checked": loc.last_checked.isoformat(),
                         "owner_id": loc.owner_id,
-                        "custom_name": loc.custom_name,
+                        # custom_name NOT saved - SettingsManager is source of truth
                         "is_placeholder": loc.is_placeholder,
                     }
                     for loc in self._cache.values()
@@ -130,14 +155,6 @@ class LocationService:
             logger.debug("Saved %d locations to cache", len(self._cache))
         except Exception:
             logger.exception("Failed to save location cache")
-
-    def _load_custom_names(self) -> None:
-        """(deprecated) Placeholder for compatibility - custom names are loaded from locations.json."""
-        return
-
-    def _save_custom_names(self) -> None:
-        # Custom names are persisted as part of locations.json by _save_cache
-        return
 
     def get_cached_location(self, location_id: int) -> LocationInfo | None:
         """Get cached location info if available.
@@ -488,8 +505,7 @@ class LocationService:
             location_id: Location ID
             custom_name: Custom name to set, or None to remove custom name
         """
-        # Update in-memory cache immediately so UI can reflect the change without
-        # waiting for async persistence. Persist the cache asynchronously.
+        # Update in-memory cache immediately for UI responsiveness
         now = datetime.now(UTC)
 
         existing = self._cache.get(location_id)
@@ -497,9 +513,10 @@ class LocationService:
             if existing:
                 existing.custom_name = custom_name
                 existing.last_checked = now
-                existing.is_placeholder = False
+                if existing.is_placeholder:
+                    existing.is_placeholder = False
             else:
-                # Create a cache entry using the custom name as the display name until ESI can provide the real one
+                # Create a placeholder entry for the custom-named location
                 loc = LocationInfo(
                     location_id=location_id,
                     name=custom_name,
@@ -507,7 +524,7 @@ class LocationService:
                     last_checked=now,
                     owner_id=None,
                     custom_name=custom_name,
-                    is_placeholder=False,
+                    is_placeholder=True,
                 )
                 self._cache[location_id] = loc
             logger.info("Set custom name for location %d: %s", location_id, custom_name)
@@ -518,8 +535,13 @@ class LocationService:
                 existing.last_checked = now
             logger.info("Removed custom name for location %d", location_id)
 
-        # Save cache to persist the custom name change
-        self._save_cache()
+        # Persist to SettingsManager (source of truth for custom names)
+        if self._settings:
+            self._settings.set_custom_location(location_id, custom_name)
+        else:
+            logger.warning(
+                "No settings manager configured - custom name change not persisted"
+            )
 
     def get_display_name(self, location_id: int) -> str | None:
         """Get the display name for a location, preferring custom name over ESI name.
