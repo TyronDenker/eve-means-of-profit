@@ -39,7 +39,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from utils.config import get_config
+from .config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -543,5 +543,6 @@ def reset_settings_manager() -> None:
 
     # Also reset the SettingsManager singleton
     SettingsManager._instance = None  # noqa: SLF001
+
 
 global_settings = get_settings_manager()
