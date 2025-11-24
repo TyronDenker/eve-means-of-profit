@@ -1,5 +1,6 @@
 """Application/business models (domain layer)."""
 
+from .enriched_asset import EnrichedAsset
 from .fuzz_market import (
     FuzzworkMarketDataPoint,
     FuzzworkMarketStats,
@@ -19,6 +20,7 @@ __all__ = [
     "AssetChange",
     "AssetSnapshot",
     "CustomPrice",
+    "EnrichedAsset",
     "FuzzworkMarketDataPoint",
     "FuzzworkMarketStats",
     "FuzzworkRegionMarketData",
