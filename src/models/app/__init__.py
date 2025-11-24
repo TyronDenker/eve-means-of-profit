@@ -5,9 +5,11 @@ from .fuzz_market import (
     FuzzworkMarketStats,
     FuzzworkRegionMarketData,
 )
+from .location import LocationInfo
 from .snapshot import (
     AssetChange,
     AssetSnapshot,
+    CustomPrice,
     NetWorthSnapshot,
     PriceHistory,
     PriceSnapshot,
@@ -16,9 +18,11 @@ from .snapshot import (
 __all__ = [
     "AssetChange",
     "AssetSnapshot",
+    "CustomPrice",
     "FuzzworkMarketDataPoint",
     "FuzzworkMarketStats",
     "FuzzworkRegionMarketData",
+    "LocationInfo",
     "NetWorthComponent",
     "NetWorthSnapshot",
     "PriceHistory",

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from models.app import AssetChange, AssetSnapshot
-from models.eve.asset import EveAsset
+from models.eve import EveAsset
 
 if TYPE_CHECKING:
     from .repository import Repository

@@ -12,7 +12,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from models.app.snapshot import CustomPrice
+from models.app import CustomPrice
 
 if TYPE_CHECKING:
     from .repository import Repository

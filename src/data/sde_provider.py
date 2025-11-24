@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 
-from data.parsers.sde_jsonl import SDEJsonlParser
+from data.parsers import SDEJsonlParser
 from models.eve import (
     EveCategory,
     EveGroup,
