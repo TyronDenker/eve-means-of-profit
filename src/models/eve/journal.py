@@ -31,8 +31,3 @@ class EveJournalEntry(BaseModel):
     context_id_type: str | None = Field(
         None, description="Type of context (contract, structure, etc.)"
     )
-
-    class Config:
-        """Pydantic config."""
-
-        populate_by_name = True
