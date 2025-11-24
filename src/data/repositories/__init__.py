@@ -43,7 +43,6 @@ from . import (
 from .repository import Repository
 
 __all__ = [
-    # New unified structure
     "Repository",
     "assets",
     "contracts",
