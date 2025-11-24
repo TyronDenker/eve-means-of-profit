@@ -121,3 +121,45 @@ class WalletEndpoints:
             character_id,
         )
         return [EveJournalEntry.model_validate(entry) for entry in all_entries]
+
+    async def get_balance(
+        self,
+        character_id: int,
+        use_cache: bool = True,
+        bypass_cache: bool = False,
+    ) -> float:
+        """Get current wallet balance for a character.
+
+        Args:
+            character_id: Character ID
+            use_cache: Whether to use cache
+            bypass_cache: Force fresh fetch
+
+        Returns:
+            Current wallet balance in ISK
+
+        Raises:
+            ValueError: If character not authenticated
+        """
+        if not self._client.auth:
+            raise ValueError(
+                "Authentication required. Initialize ESIClient with client_id "
+                "and call authenticate_character() first."
+            )
+
+        path = f"/characters/{character_id}/wallet/"
+
+        data, _ = await self._client.request(
+            "GET",
+            path,
+            use_cache=(use_cache and not bypass_cache),
+            owner_id=character_id,
+        )
+
+        balance = float(data) if data else 0.0
+        logger.debug(
+            "Retrieved wallet balance %.2f ISK for character %d",
+            balance,
+            character_id,
+        )
+        return balance
