@@ -199,8 +199,31 @@ async def get_balance_history(
     return [(datetime.fromisoformat(row["date"]), row["balance"]) for row in rows]
 
 
+async def get_current_balance(repo: Repository, character_id: int) -> float | None:
+    """Get the current wallet balance from the most recent journal entry.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+
+    Returns:
+        Most recent balance from journal, or None if no entries exist
+    """
+    sql = """
+    SELECT balance
+    FROM wallet_journal
+    WHERE character_id = ?
+    ORDER BY date DESC
+    LIMIT 1
+    """
+
+    row = await repo.fetchone(sql, (character_id,))
+    return float(row["balance"]) if row else None
+
+
 __all__ = [
     "get_balance_history",
+    "get_current_balance",
     "get_entries_by_type",
     "get_journal_entries",
     "get_latest_journal_date",
