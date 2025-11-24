@@ -1,6 +1,8 @@
 """Centralized configuration management for EVE Means of Profit.
 
-This module provides a comprehensive configuration system with the following features:
+This module provides application-level configuration from environment variables.
+
+Features:
 - Environment variable support via .env files
 - Fallback priority: .env → hardcoded defaults
 - Automatic .env.example generation from defaults
