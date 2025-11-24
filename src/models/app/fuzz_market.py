@@ -67,3 +67,21 @@ class FuzzworkMarketDataPoint(BaseModel):
     region_data: dict[int, FuzzworkRegionMarketData] = Field(
         default_factory=dict, description="Per-region market statistics"
     )
+
+    def has_buy_orders(self) -> bool:
+        """Check if this type has buy orders in any region.
+
+        Returns:
+            True if buy order statistics are available in any region
+
+        """
+        return any(region.has_buy_orders() for region in self.region_data.values())
+
+    def has_sell_orders(self) -> bool:
+        """Check if this type has sell orders in any region.
+
+        Returns:
+            True if sell order statistics are available in any region
+
+        """
+        return any(region.has_sell_orders() for region in self.region_data.values())
