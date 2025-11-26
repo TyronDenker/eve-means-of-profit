@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 class EveType(BaseModel):
     """Represents an EVE Online type with various attributes."""
 
-    id: int = Field(..., ge=0, description="The unique identifier for the Eve type.")
+    type_id: int = Field(
+        ..., ge=0, description="The unique identifier for the Eve type."
+    )
     base_price: float | None = Field(
         None,
         ge=1,

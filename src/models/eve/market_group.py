@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class EveMarketGroup(BaseModel):
     """Represents an EVE Online market group."""
 
-    id: int = Field(
+    marketgroup_id: int = Field(
         ...,
         ge=2,
         description="The unique identifier for the Eve market group.",

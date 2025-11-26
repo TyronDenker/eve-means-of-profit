@@ -12,7 +12,7 @@ class EveJournalEntry(BaseModel):
     payments, etc.) for a character.
     """
 
-    id: int = Field(..., description="Unique journal entry ID", alias="entry_id")
+    journal_id: int = Field(..., description="Unique journal entry ID")
     date: datetime = Field(..., description="Entry timestamp")
     ref_type: str = Field(
         ..., description="Entry type (bounty_prizes, market_transaction, etc.)"

@@ -12,6 +12,9 @@ class EveStructure(BaseModel):
     unique to that source.
     """
 
+    structure_id: int = Field(
+        ..., description="(Not returned by ESI) Unique ID of the structure"
+    )
     name: str = Field(..., description="Name of the structure")
     owner_id: int = Field(..., description="Corporation ID that owns the structure")
     solar_system_id: int = Field(

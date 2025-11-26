@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 class EveGroup(BaseModel):
     """Represents an EVE Online group."""
 
-    id: int = Field(..., ge=0, description="The unique identifier for the Eve group.")
+    group_id: int = Field(
+        ..., ge=0, description="The unique identifier for the Eve group."
+    )
     anchorable: bool = Field(..., description="Whether the group is anchorable.")
     anchored: bool = Field(..., description="Whether the group is anchored.")
     category_id: int = Field(
