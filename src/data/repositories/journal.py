@@ -49,7 +49,7 @@ async def save_journal_entries(
 
     params = [
         (
-            entry.id,
+            entry.journal_id,
             character_id,
             entry.date,
             entry.ref_type,
@@ -95,7 +95,7 @@ async def get_journal_entries(
     rows = await repo.fetchall(sql, (character_id, limit))
     return [
         EveJournalEntry(
-            entry_id=row["entry_id"],
+            journal_id=row["journal_id"],
             date=datetime.fromisoformat(row["date"]),
             ref_type=row["ref_type"],
             first_party_id=row["first_party_id"],
@@ -159,7 +159,7 @@ async def get_entries_by_type(
     rows = await repo.fetchall(sql, (character_id, ref_type))
     return [
         EveJournalEntry(
-            entry_id=row["entry_id"],
+            journal_id=row["journal_id"],
             date=datetime.fromisoformat(row["date"]),
             ref_type=row["ref_type"],
             first_party_id=row["first_party_id"],
