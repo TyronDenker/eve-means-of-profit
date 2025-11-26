@@ -1050,32 +1050,27 @@ class ESIClient:
             return None, None, None
 
         try:
-            cached_data, cached_headers, cached_expires, cached_etag, _ = cached
+            cached_data, cached_headers, cached_etag, _ = cached
             cached_headers = cached_headers or {}
 
             if cached_data is None:
                 return None, None, None
 
-            # Check if cache is still valid
+            # If cache returns a value, it's valid (diskcache handles expiry)
             if cached_etag:
-                if cached_expires and datetime.now(UTC) <= cached_expires:
-                    logger.debug("Cache hit: %s %s", method, path)
-                    return (
-                        cached_data,
-                        cached_headers,
-                        None,
-                    )  # Return data, don't need ETag
-                logger.debug(
-                    "Cache expired, using conditional request: %s %s", method, path
-                )
-                return None, None, cached_etag  # Return ETag for conditional request
+                logger.debug("Cache hit: %s %s (ETag)", method, path)
+                return (
+                    cached_data,
+                    cached_headers,
+                    None,
+                )  # Return data, don't need ETag
 
             # No ETag, return cached data
             logger.debug("Cache hit: %s %s", method, path)
             return cached_data, cached_headers, None
 
         except Exception as e:
-            logger.debug("Cache format error: %s", e)
+            logger.error("Cache format error: %s", e)
             return None, None, None
 
     def _prepare_request_headers(

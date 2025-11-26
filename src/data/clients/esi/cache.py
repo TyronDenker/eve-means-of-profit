@@ -63,33 +63,22 @@ class ESICache:
         """
         return self._make_key(method, url, params, json_body)
 
-    def _get_expiration(self, headers: dict) -> str | None:
-        """Extract expiration time from ESI headers as ISO string.
-
-        Respects standard expires header.
-
-        Args:
-            headers: Response headers
-
-        Returns:
-            Expiration time as ISO 8601 string or None if no expiration found
-        """
-        expires_time = None
-
+    def _get_expiration(self, headers: dict) -> datetime | None:
+        """Extract expiration time from ESI headers as a datetime object (UTC)."""
         if expires := headers.get("expires"):
             try:
                 dt = parsedate_to_datetime(expires)
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=UTC)
-                expires_time = dt.astimezone(UTC).isoformat()
-            except (TypeError, ValueError):
-                pass
-
-        return expires_time
+                return dt.astimezone(UTC)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Failed to parse Expires header '{expires}': {e}")
+                return None
+        return None
 
     def get(
         self, method: str, url: str, params: dict | None = None, json_body: Any = None
-    ) -> tuple[Any, dict, str | None, str | None, str | None] | None:
+    ) -> tuple[Any, dict, str | None, datetime | None] | None:
         """Get cached response if valid.
 
         Args:
@@ -99,8 +88,7 @@ class ESICache:
             json_body: JSON body for POST/PUT requests
 
         Returns:
-            Tuple of (response_data, headers, expires_at_iso, etag, cached_at_iso) or None if cache miss/expired
-            Note: expires_at_iso and cached_at_iso are ISO 8601 strings, not datetime objects
+            Tuple of (response_data, headers, etag, cached_at) or None if cache miss/expired
         """
         key = self._make_key(method, url, params, json_body)
         cached = self.cache.get(key)
@@ -108,41 +96,29 @@ class ESICache:
         if cached is None:
             return None
 
-        # We store and expect a 5-tuple: (data, headers_normalized, expires_at_iso, etag, cached_at_iso)
+        # We store and expect a 4-tuple: (data, headers_normalized, etag, cached_at)
         try:
-            if len(cached) == 5:
-                data, headers, expires_at_iso, etag, cached_at_iso = cached
+            if len(cached) == 4:
+                data, headers, etag, cached_at = cached
             else:
-                # Unexpected format - delete and treat as miss
                 self.cache.delete(key)
                 return None
         except Exception:
-            # If the cache contains an unexpected value, remove it and treat as miss
             self.cache.delete(key)
             return None
 
-        # Check if cache entry is still valid by expiration
-        if expires_at_iso:
+        # Handle legacy string format for cached_at
+        if cached_at and isinstance(cached_at, str):
             try:
-                expires_at = datetime.fromisoformat(expires_at_iso)
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=UTC)
-            except (ValueError, TypeError) as e:
-                # Failed to parse expiration - treat as expired without ETag support
-                logger.debug("Failed to parse expires_at '%s': %s", expires_at_iso, e)
-                self.cache.delete(key)
-                return None
+                dt = datetime.fromisoformat(cached_at)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
+                cached_at = dt
+            except Exception:
+                pass
 
-            if datetime.now(UTC) > expires_at:
-                # Keep expired entry if it has an ETag - we can use conditional requests
-                if etag:
-                    # Return conditional-ready tuple (data, headers, expires_at_iso, etag, cached_at_iso)
-                    return data, headers, expires_at_iso, etag, cached_at_iso
-                # No etag - delete expired entry
-                self.cache.delete(key)
-                return None
-
-        return data, headers, expires_at_iso, (etag if etag else None), cached_at_iso
+        logger.debug(f"Cache hit for key={key} etag={etag}")
+        return data, headers, (etag if etag else None), cached_at
 
     def get_etag(
         self, method: str, url: str, params: dict | None = None, json_body: Any = None
@@ -164,14 +140,13 @@ class ESICache:
         if cached is None:
             return None
 
-        # Expect 5-tuple format: (data, headers, expires_at_iso, etag, cached_at_iso)
+        # Expect 4-tuple format: (data, headers, etag, cached_at)
         try:
-            if len(cached) == 5:
-                _, headers, _, etag, _ = cached
+            if len(cached) == 4:
+                _, headers, etag, _ = cached
             else:
                 return None
         except Exception:
-            # Unexpected format
             return None
 
         # Prefer explicit etag value; fall back to header if present
@@ -190,27 +165,25 @@ class ESICache:
         params: dict | None = None,
         json_body: Any = None,
     ) -> None:
-        """Store response in cache with ETag support.
-
-        Args:
-            method: HTTP method
-            url: Request URL
-            data: Response data to cache
-            headers: Response headers
-            params: Query parameters
-            json_body: JSON body for POST/PUT requests
-        """
+        """Store response in cache with ETag support and expiry."""
         key = self._make_key(method, url, params, json_body)
-
-        # Normalize header names to lowercase for consistent lookup later
         headers_normalized = {k.lower(): v for k, v in (headers or {}).items()}
-
         expires_at = self._get_expiration(headers_normalized)
         etag = headers_normalized.get("etag")
-        cached_at = datetime.now(UTC).isoformat()
+        cached_at = datetime.now(UTC)
 
-        # Store data, normalized headers, expiration time, etag, and cached_at timestamp
-        self.cache.set(key, (data, headers_normalized, expires_at, etag, cached_at))
+        # Only store expires_at if you need it for later logic; otherwise, remove from tuple
+        cache_value = (data, headers_normalized, etag, cached_at)
+        expire_seconds = None
+        if expires_at:
+            expire_seconds = (expires_at - datetime.now(UTC)).total_seconds()
+
+        logger.debug(f"Caching key={key} expire_in={expire_seconds}s etag={etag}")
+        self.cache.set(
+            key,
+            cache_value,
+            expire=expire_seconds,
+        )
 
     def clear(self) -> None:
         """Clear all cached entries."""
@@ -239,16 +212,7 @@ class ESICache:
         if not cached:
             return None
 
-        # cached format: (data, headers, expires_at_iso, etag, cached_at_iso) or old (data, headers, expires_at_iso, etag)
-        if len(cached) in (4, 5):
-            expires_at_iso = cached[2]
-            if expires_at_iso:
-                try:
-                    expires_at = datetime.fromisoformat(expires_at_iso)
-                    if expires_at.tzinfo is None:
-                        expires_at = expires_at.replace(tzinfo=UTC)
-                    return (expires_at - datetime.now(UTC)).total_seconds()
-                except (ValueError, TypeError):
-                    return None
-
+        # cached format: (data, headers, etag, cached_at)
+        # Expiry is managed by diskcache, so we can't calculate exact time left unless we store it separately
+        # For now, return None to indicate expiry is managed by diskcache
         return None
