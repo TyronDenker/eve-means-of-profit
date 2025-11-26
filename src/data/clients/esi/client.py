@@ -1194,7 +1194,6 @@ class ESIClient:
         Returns:
             Tuple of (cached_data, merged_headers)
         """
-        logger.debug("304 Not Modified: %s %s (using cached data)", method, path)
         # Served-by indicator for observability
         logger.debug("Served by API 304 (validated cache): %s %s", method, path)
         self.rate_limiter.reset_backoff(group_key=group_key)
