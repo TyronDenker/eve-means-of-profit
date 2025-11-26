@@ -431,7 +431,7 @@ class SDEProvider:
         """Load and cache all types."""
         if self._types_cache is None:
             logger.info("Loading types from SDE...")
-            self._types_cache = {t.id: t for t in self._parser.load_types()}
+            self._types_cache = {t.type_id: t for t in self._parser.load_types()}
             logger.info(f"Loaded {len(self._types_cache)} types")
             self._build_type_indices()
         return self._types_cache
@@ -490,7 +490,9 @@ class SDEProvider:
         """Load and cache all categories."""
         if self._categories_cache is None:
             logger.info("Loading categories from SDE...")
-            self._categories_cache = {c.id: c for c in self._parser.load_categories()}
+            self._categories_cache = {
+                c.category_id: c for c in self._parser.load_categories()
+            }
             logger.info(f"Loaded {len(self._categories_cache)} categories")
         return self._categories_cache
 
@@ -498,7 +500,7 @@ class SDEProvider:
         """Load and cache all groups."""
         if self._groups_cache is None:
             logger.info("Loading groups from SDE...")
-            self._groups_cache = {g.id: g for g in self._parser.load_groups()}
+            self._groups_cache = {g.group_id: g for g in self._parser.load_groups()}
             logger.info(f"Loaded {len(self._groups_cache)} groups")
             self._build_group_indices()
         return self._groups_cache
@@ -530,7 +532,7 @@ class SDEProvider:
         if self._market_groups_cache is None:
             logger.info("Loading market groups from SDE...")
             self._market_groups_cache = {
-                mg.id: mg for mg in self._parser.load_market_groups()
+                mg.marketgroup_id: mg for mg in self._parser.load_market_groups()
             }
             logger.info(f"Loaded {len(self._market_groups_cache)} market groups")
         return self._market_groups_cache
