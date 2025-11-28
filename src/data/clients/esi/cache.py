@@ -30,7 +30,7 @@ class ESICache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache = diskcache.Cache(str(self.cache_dir))
 
-    def _make_key(
+    def make_key(
         self, method: str, url: str, params: dict | None = None, json_body: Any = None
     ) -> str:
         """Generate a cache key from request components.
@@ -53,16 +53,6 @@ class ESICache:
         key_input = f"{method}:{url}:{param_str}:{body_str}"
         return hashlib.sha256(key_input.encode()).hexdigest()
 
-    def make_key(
-        self, method: str, url: str, params: dict | None = None, json_body: Any = None
-    ) -> str:
-        """Public wrapper for generating a cache key.
-
-        Prefer this over accessing the private `_make_key` from outside the
-        cache implementation.
-        """
-        return self._make_key(method, url, params, json_body)
-
     def _get_expiration(self, headers: dict) -> datetime | None:
         """Extract expiration time from ESI headers as a datetime object (UTC)."""
         if expires := headers.get("expires"):
@@ -73,13 +63,13 @@ class ESICache:
                 return dt.astimezone(UTC)
             except (TypeError, ValueError) as e:
                 logger.warning(f"Failed to parse Expires header '{expires}': {e}")
-                return None
+
         return None
 
     def get(
         self, method: str, url: str, params: dict | None = None, json_body: Any = None
     ) -> tuple[Any, dict, str | None, datetime | None] | None:
-        """Get cached response if valid.
+        """Get cached response if valid
 
         Args:
             method: HTTP method
@@ -90,71 +80,25 @@ class ESICache:
         Returns:
             Tuple of (response_data, headers, etag, cached_at) or None if cache miss/expired
         """
-        key = self._make_key(method, url, params, json_body)
+        key = self.make_key(method, url, params, json_body)
         cached = self.cache.get(key)
 
         if cached is None:
             return None
 
-        # We store and expect a 4-tuple: (data, headers_normalized, etag, cached_at)
         try:
-            if len(cached) == 4:
-                data, headers, etag, cached_at = cached
-            else:
-                self.cache.delete(key)
-                return None
-        except Exception:
-            self.cache.delete(key)
-            return None
-
-        # Handle legacy string format for cached_at
-        if cached_at and isinstance(cached_at, str):
-            try:
+            data, headers, etag, cached_at = cached
+            if cached_at and isinstance(cached_at, str):
                 dt = datetime.fromisoformat(cached_at)
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=UTC)
                 cached_at = dt
-            except Exception:
-                pass
-
-        logger.debug(f"Cache hit for key={key} etag={etag}")
-        return data, headers, (etag if etag else None), cached_at
-
-    def get_etag(
-        self, method: str, url: str, params: dict | None = None, json_body: Any = None
-    ) -> str | None:
-        """Get ETag for a cached entry (even if expired).
-
-        Args:
-            method: HTTP method
-            url: Request URL
-            params: Query parameters
-            json_body: JSON body for POST/PUT requests
-
-        Returns:
-            ETag string or None
-        """
-        key = self._make_key(method, url, params, json_body)
-        cached = self.cache.get(key)
-
-        if cached is None:
-            return None
-
-        # Expect 4-tuple format: (data, headers, etag, cached_at)
-        try:
-            if len(cached) == 4:
-                _, headers, etag, _ = cached
-            else:
-                return None
         except Exception:
+            self.cache.delete(key)
             return None
 
-        # Prefer explicit etag value; fall back to header if present
-        if etag:
-            return etag
-        if isinstance(headers, dict):
-            return headers.get("etag")
-        return None
+        logger.info(f"Cache hit for key={key} etag={etag}")
+        return data, headers, (etag if etag else None), cached_at
 
     def set(
         self,
@@ -166,19 +110,19 @@ class ESICache:
         json_body: Any = None,
     ) -> None:
         """Store response in cache with ETag support and expiry."""
-        key = self._make_key(method, url, params, json_body)
+        key = self.make_key(method, url, params, json_body)
         headers_normalized = {k.lower(): v for k, v in (headers or {}).items()}
-        expires_at = self._get_expiration(headers_normalized)
         etag = headers_normalized.get("etag")
         cached_at = datetime.now(UTC)
 
-        # Only store expires_at if you need it for later logic; otherwise, remove from tuple
-        cache_value = (data, headers_normalized, etag, cached_at)
+        # Get expiry from ESI 'expires' header
+        expires_at = self._get_expiration(headers_normalized)
         expire_seconds = None
         if expires_at:
             expire_seconds = (expires_at - datetime.now(UTC)).total_seconds()
 
-        logger.debug(f"Caching key={key} expire_in={expire_seconds}s etag={etag}")
+        cache_value = (data, headers_normalized, etag, cached_at)
+        logger.info(f"Caching key={key} expire_in={expire_seconds}s etag={etag}")
         self.cache.set(
             key,
             cache_value,
@@ -196,7 +140,7 @@ class ESICache:
     def time_to_expiry(
         self, method: str, url: str, params: dict | None = None, json_body: Any = None
     ) -> float | None:
-        """Return seconds until the cached entry expires, or None if no expiry.
+        """Return seconds until the cached entry expires, or None if no expiry (expects 4-tuple format).
 
         Args:
             method: HTTP method
@@ -207,12 +151,21 @@ class ESICache:
         Returns:
             Seconds until expiry (float) or None if not present
         """
-        key = self._make_key(method, url, params, json_body)
-        cached = self.cache.get(key)
-        if not cached:
-            return None
+        key = self.make_key(method, url, params, json_body)
 
-        # cached format: (data, headers, etag, cached_at)
-        # Expiry is managed by diskcache, so we can't calculate exact time left unless we store it separately
-        # For now, return None to indicate expiry is managed by diskcache
+        # Use diskcache's get with expire_time parameter to get expiry timestamp
+        try:
+            result = self.cache.get(key, expire_time=True)
+            if result is None:
+                return None
+
+            # Result is (value, expire_timestamp) or just value if expire_time not supported
+            if isinstance(result, tuple) and len(result) == 2:
+                _, expire_timestamp = result
+                if expire_timestamp is not None:
+                    now_timestamp = datetime.now(UTC).timestamp()
+                    ttl = expire_timestamp - now_timestamp
+                    return ttl if ttl > 0 else None
+        except Exception as e:
+            logger.warning(f"Error getting expiry time for key {key}: {e}")
         return None
