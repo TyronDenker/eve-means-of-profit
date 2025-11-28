@@ -1744,7 +1744,7 @@ class ESIClient:
         filename = f"{entity_id}_{image_type}_{size}.png"
         return entity_dir / filename
 
-    async def get_image(
+    async def _get_image(
         self,
         entity_type: str,
         entity_id: int,
@@ -1833,7 +1833,7 @@ class ESIClient:
         entity_type: str,
         entity_id: int,
         image_type: str = "portrait",
-        preferred_size: int = 128,
+        preferred_size: int = 1024,
         use_cache: bool = True,
     ) -> tuple[bytes | None, int | None]:
         """Get an image with automatic size fallback.
@@ -1845,7 +1845,7 @@ class ESIClient:
             entity_type: Type of entity ('characters', 'corporations', 'alliances', 'types')
             entity_id: Entity ID
             image_type: Type of image ('portrait', 'logo', 'icon', 'render')
-            preferred_size: Preferred image size (default: 128)
+            preferred_size: Preferred image size (default: 1024)
             use_cache: Whether to use disk cache
 
         Returns:
@@ -1879,7 +1879,7 @@ class ESIClient:
         sizes_to_try = [x for x in sizes_to_try if not (x in seen or seen.add(x))]
 
         for size in sizes_to_try:
-            img_data = await self.get_image(
+            img_data = await self._get_image(
                 entity_type, entity_id, size, image_type, use_cache
             )
             if img_data:
