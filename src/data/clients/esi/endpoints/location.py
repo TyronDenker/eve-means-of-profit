@@ -38,8 +38,9 @@ class LocationEndpoints:
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> EveLocation:
-        """Get a character's current location.
+    ) -> tuple[EveLocation, dict]:
+        """
+        Get a character's current location.
 
         Args:
             character_id: Character ID
@@ -47,7 +48,7 @@ class LocationEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            Validated EveLocation model
+            Tuple of (validated EveLocation model, response headers)
 
         Raises:
             ValueError: If character not authenticated
@@ -59,7 +60,7 @@ class LocationEndpoints:
             )
 
         path = f"/characters/{character_id}/location/"
-        data, _ = await self._client.request(
+        data, headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
@@ -67,4 +68,4 @@ class LocationEndpoints:
         )
 
         logger.debug("Retrieved location for character %d", character_id)
-        return EveLocation.model_validate(data)
+        return EveLocation.model_validate(data), headers

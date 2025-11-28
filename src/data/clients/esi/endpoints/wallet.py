@@ -37,8 +37,9 @@ class WalletEndpoints:
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> list[EveTransaction]:
-        """Get wallet transactions for a character.
+    ) -> tuple[list[EveTransaction], dict]:
+        """
+        Get wallet transactions for a character.
 
         Args:
             character_id: Character ID
@@ -46,7 +47,7 @@ class WalletEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            List of validated EveTransaction models
+            A tuple containing a list of validated EveTransaction models and the response headers.
 
         Raises:
             ValueError: If character not authenticated
@@ -56,34 +57,33 @@ class WalletEndpoints:
                 "Authentication required. Initialize ESIClient with client_id "
                 "and call authenticate_character() first."
             )
-
         path = f"/characters/{character_id}/wallet/transactions/"
-
-        data, _ = await self._client.request(
+        data, headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
             owner_id=character_id,
         )
-
         logger.debug(
             "Retrieved %d transactions for character %d",
             len(data) if isinstance(data, list) else 0,
             character_id,
         )
-        return (
+        validated = (
             [EveTransaction.model_validate(tx) for tx in data]
             if isinstance(data, list)
             else []
         )
+        return validated, headers
 
     async def get_journal(
         self,
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> list[EveJournalEntry]:
-        """Get wallet journal for a character.
+    ) -> tuple[list[EveJournalEntry], dict]:
+        """
+        Get wallet journal for a character (all pages combined).
 
         Args:
             character_id: Character ID
@@ -91,7 +91,7 @@ class WalletEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            List of validated EveJournalEntry models
+            A tuple containing a list of validated EveJournalEntry models and the response headers from the first page.
 
         Raises:
             ValueError: If character not authenticated
@@ -104,14 +104,36 @@ class WalletEndpoints:
 
         path = f"/characters/{character_id}/wallet/journal/"
 
-        # Wallet journal can be paginated
         all_entries: list[dict] = []
-        async for page_data in self._client.paginated_request(
+        first_headers: dict | None = None
+
+        # Always fetch first page directly to get headers (for cache expiry)
+        first_page_data, first_headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
             owner_id=character_id,
-        ):
+            params={"page": 1},
+        )
+        if isinstance(first_page_data, list):
+            all_entries.extend(first_page_data)
+
+        # Get total pages from headers
+        x_pages = first_headers.get("x-pages", "1")
+        try:
+            total_pages = int(x_pages)
+        except (ValueError, TypeError):
+            total_pages = 1
+
+        # Fetch remaining pages
+        for page in range(2, total_pages + 1):
+            page_data, _ = await self._client.request(
+                "GET",
+                path,
+                use_cache=(use_cache and not bypass_cache),
+                owner_id=character_id,
+                params={"page": page},
+            )
             if isinstance(page_data, list):
                 all_entries.extend(page_data)
 
@@ -120,15 +142,23 @@ class WalletEndpoints:
             len(all_entries),
             character_id,
         )
-        return [EveJournalEntry.model_validate(entry) for entry in all_entries]
+
+        # Return the verified model with id renamed to journal_id
+        validated = [
+            EveJournalEntry.model_validate({**entry, "journal_id": entry.pop("id")})
+            for entry in all_entries
+        ]
+
+        return validated, first_headers or {}
 
     async def get_balance(
         self,
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> float:
-        """Get current wallet balance for a character.
+    ) -> tuple[float, dict]:
+        """
+        Get current wallet balance for a character.
 
         Args:
             character_id: Character ID
@@ -136,7 +166,7 @@ class WalletEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            Current wallet balance in ISK
+            A tuple containing the current wallet balance in ISK and the response headers.
 
         Raises:
             ValueError: If character not authenticated
@@ -146,20 +176,17 @@ class WalletEndpoints:
                 "Authentication required. Initialize ESIClient with client_id "
                 "and call authenticate_character() first."
             )
-
         path = f"/characters/{character_id}/wallet/"
-
-        data, _ = await self._client.request(
+        data, headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
             owner_id=character_id,
         )
-
         balance = float(data) if data else 0.0
         logger.debug(
             "Retrieved wallet balance %.2f ISK for character %d",
             balance,
             character_id,
         )
-        return balance
+        return balance, headers

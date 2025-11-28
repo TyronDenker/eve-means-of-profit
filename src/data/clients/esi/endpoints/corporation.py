@@ -37,8 +37,9 @@ class CorporationEndpoints:
         character_id: int | None = None,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> list[EveCorporationProject]:
-        """Get corporation projects (all pages combined).
+    ) -> tuple[list[EveCorporationProject], dict]:
+        """
+        Get corporation projects (all pages combined).
 
         Args:
             corporation_id: Corporation ID
@@ -47,7 +48,7 @@ class CorporationEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            List of validated EveProject models
+            Tuple of (list of validated EveProject models, response headers from first page)
 
         Note:
             This endpoint uses cursor-based pagination.
@@ -59,6 +60,23 @@ class CorporationEndpoints:
 
         # Collect all pages
         all_projects = []
+        # Manually fetch first page to get headers
+        first_data, first_headers = await self._client.request(
+            "GET",
+            path,
+            use_cache=(use_cache and not bypass_cache),
+            owner_id=owner_id,
+            full_url=full_url,
+        )
+        # Handle first page data
+        if isinstance(first_data, list):
+            all_projects.extend(first_data)
+        elif isinstance(first_data, dict):
+            if "items" in first_data:
+                all_projects.extend(first_data["items"])
+            elif "project_id" in first_data:
+                all_projects.append(first_data)
+        # Use paginated_request for additional pages (if any)
         async for page_data in self._client.paginated_request(
             "GET",
             path,
@@ -66,33 +84,21 @@ class CorporationEndpoints:
             owner_id=owner_id,
             full_url=full_url,
         ):
-            # Cursor pagination may return:
-            # 1. A list of projects
-            # 2. A dict with 'cursor' and potentially other keys with project data
-            # 3. Empty response (cursor only, no projects)
-
             if isinstance(page_data, list):
-                # Direct list of projects
                 all_projects.extend(page_data)
             elif isinstance(page_data, dict):
-                # Check for 'items' key (some cursor endpoints)
                 if "items" in page_data:
                     all_projects.extend(page_data["items"])
-                # Check if this looks like a project object (has required fields)
                 elif "project_id" in page_data:
                     all_projects.append(page_data)
-                # Otherwise it's likely just cursor metadata (no actual projects)
-                # Skip it silently
-
         logger.info(
             "Retrieved %d projects for corporation %d",
             len(all_projects),
             corporation_id,
         )
-        # Only validate if we have data to validate
-        if all_projects:
-            return [
-                EveCorporationProject.model_validate(project)
-                for project in all_projects
-            ]
-        return []
+        validated = (
+            [EveCorporationProject.model_validate(project) for project in all_projects]
+            if all_projects
+            else []
+        )
+        return validated, first_headers

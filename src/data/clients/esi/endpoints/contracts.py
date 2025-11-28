@@ -37,7 +37,7 @@ class ContractsEndpoints:
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> list[EveContract]:
+    ) -> tuple[list[EveContract], dict]:
         """Get contracts for a character (all pages combined).
 
         Args:
@@ -46,7 +46,7 @@ class ContractsEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            List of validated EveContract models
+            tuple of (contracts, headers)
 
         Raises:
             ValueError: If character not authenticated
@@ -59,14 +59,36 @@ class ContractsEndpoints:
 
         path = f"/characters/{character_id}/contracts/"
 
-        # Contracts can be paginated
         all_contracts: list[dict] = []
-        async for page_data in self._client.paginated_request(
+        first_headers: dict | None = None
+
+        # Always fetch first page directly to get headers (for cache expiry)
+        first_page_data, first_headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
             owner_id=character_id,
-        ):
+            params={"page": 1},
+        )
+        if isinstance(first_page_data, list):
+            all_contracts.extend(first_page_data)
+
+        # Get total pages from headers
+        x_pages = first_headers.get("x-pages", "1")
+        try:
+            total_pages = int(x_pages)
+        except (ValueError, TypeError):
+            total_pages = 1
+
+        # Fetch remaining pages
+        for page in range(2, total_pages + 1):
+            page_data, _ = await self._client.request(
+                "GET",
+                path,
+                use_cache=(use_cache and not bypass_cache),
+                owner_id=character_id,
+                params={"page": page},
+            )
             if isinstance(page_data, list):
                 all_contracts.extend(page_data)
 
@@ -75,7 +97,8 @@ class ContractsEndpoints:
             len(all_contracts),
             character_id,
         )
-        return [EveContract.model_validate(contract) for contract in all_contracts]
+        validated = [EveContract.model_validate(contract) for contract in all_contracts]
+        return validated, first_headers or {}
 
     async def get_items(
         self,

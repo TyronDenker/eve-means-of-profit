@@ -36,18 +36,16 @@ class AssetsEndpoints:
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-        return_headers: bool = False,
-    ) -> list[EveAsset] | tuple[list[EveAsset], dict]:
+    ) -> tuple[list[EveAsset], dict]:
         """Get all assets for a character (all pages combined).
 
         Args:
             character_id: Character ID
             use_cache: Whether to use cache
             bypass_cache: Force fresh fetch
-            return_headers: Return headers along with data
 
         Returns:
-            List of validated EveAsset models, or tuple of (assets, headers) if return_headers=True
+            tuple of (assets, headers)
 
         Raises:
             ValueError: If character not authenticated
@@ -60,56 +58,42 @@ class AssetsEndpoints:
 
         path = f"/characters/{character_id}/assets/"
 
-        # Collect all pages using paginated_request
         all_assets: list[dict] = []
         first_headers: dict | None = None
 
-        # If we need headers, make one direct request for first page to get them
-        if return_headers:
-            first_page_data, first_headers = await self._client.request(
+        # Always fetch first page directly to get headers (for cache expiry)
+        first_page_data, first_headers = await self._client.request(
+            "GET",
+            path,
+            use_cache=(use_cache and not bypass_cache),
+            owner_id=character_id,
+            params={"page": 1},
+        )
+        if isinstance(first_page_data, list):
+            all_assets.extend(first_page_data)
+
+        # Get total pages from headers
+        x_pages = first_headers.get("x-pages", "1")
+        try:
+            total_pages = int(x_pages)
+        except (ValueError, TypeError):
+            total_pages = 1
+
+        # Fetch remaining pages
+        for page in range(2, total_pages + 1):
+            page_data, _ = await self._client.request(
                 "GET",
                 path,
                 use_cache=(use_cache and not bypass_cache),
                 owner_id=character_id,
-                params={"page": 1},
+                params={"page": page},
             )
-            if isinstance(first_page_data, list):
-                all_assets.extend(first_page_data)
-
-            # Get total pages from headers
-            x_pages = first_headers.get("x-pages", "1")
-            try:
-                total_pages = int(x_pages)
-            except (ValueError, TypeError):
-                total_pages = 1
-
-            # Fetch remaining pages
-            for page in range(2, total_pages + 1):
-                page_data, _ = await self._client.request(
-                    "GET",
-                    path,
-                    use_cache=(use_cache and not bypass_cache),
-                    owner_id=character_id,
-                    params={"page": page},
-                )
-                if isinstance(page_data, list):
-                    all_assets.extend(page_data)
-        else:
-            # When headers not needed, use the more efficient paginated_request
-            async for page_data in self._client.paginated_request(
-                "GET",
-                path,
-                use_cache=(use_cache and not bypass_cache),
-                owner_id=character_id,
-            ):
-                if isinstance(page_data, list):
-                    all_assets.extend(page_data)
+            if isinstance(page_data, list):
+                all_assets.extend(page_data)
 
         # Validate and return as Pydantic models
         logger.info(
             "Retrieved %d assets for character %d", len(all_assets), character_id
         )
         validated = [EveAsset.model_validate(asset) for asset in all_assets]
-        if return_headers:
-            return validated, first_headers or {}
-        return validated
+        return validated, first_headers or {}

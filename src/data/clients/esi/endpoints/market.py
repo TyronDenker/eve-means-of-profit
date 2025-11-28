@@ -36,8 +36,9 @@ class MarketEndpoints:
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> list[EveMarketOrder]:
-        """Get market orders for a character.
+    ) -> tuple[list[EveMarketOrder], dict]:
+        """
+        Get market orders for a character.
 
         Args:
             character_id: Character ID
@@ -45,7 +46,7 @@ class MarketEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            List of validated EveMarketOrder models
+            A tuple containing a list of validated EveMarketOrder models and the response headers.
 
         Raises:
             ValueError: If character not authenticated
@@ -55,23 +56,21 @@ class MarketEndpoints:
                 "Authentication required. Initialize ESIClient with client_id "
                 "and call authenticate_character() first."
             )
-
         path = f"/characters/{character_id}/orders/"
-
-        data, _ = await self._client.request(
+        data, headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
             owner_id=character_id,
         )
-
         logger.debug(
             "Retrieved %d orders for character %d",
             len(data) if isinstance(data, list) else 0,
             character_id,
         )
-        return (
+        validated = (
             [EveMarketOrder.model_validate(order) for order in data]
             if isinstance(data, list)
             else []
         )
+        return validated, headers

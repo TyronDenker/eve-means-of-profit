@@ -39,8 +39,9 @@ class UniverseEndpoints:
         character_id: int,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> EveStructure:
-        """Get information about a structure.
+    ) -> tuple[EveStructure, dict]:
+        """
+        Get information about a structure.
 
         This endpoint requires authentication and the character must be on
         the structure's ACL (access control list) to view its information.
@@ -52,7 +53,7 @@ class UniverseEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            Validated EveStructure model with structure information
+            A tuple containing the validated EveStructure model with structure information and the response headers.
 
         Raises:
             ValueError: If character not authenticated
@@ -66,12 +67,15 @@ class UniverseEndpoints:
 
         path = f"/universe/structures/{structure_id}/"
 
-        data, _ = await self._client.request(
+        data, headers = await self._client.request(
             "GET",
             path,
             use_cache=(use_cache and not bypass_cache),
             owner_id=character_id,
         )
-
         logger.debug("Retrieved structure info for structure %d", structure_id)
-        return EveStructure.model_validate(data)
+
+        # Return validated model with structure_id added in
+        return EveStructure.model_validate(
+            {**data, "structure_id": structure_id}
+        ), headers

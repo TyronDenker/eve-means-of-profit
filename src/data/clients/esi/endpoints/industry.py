@@ -37,8 +37,9 @@ class IndustryEndpoints:
         include_completed: bool = False,
         use_cache: bool = True,
         bypass_cache: bool = False,
-    ) -> list[EveIndustryJob]:
-        """Get industry jobs for a character.
+    ) -> tuple[list[EveIndustryJob], dict]:
+        """
+        Get industry jobs for a character.
 
         Args:
             character_id: Character ID
@@ -47,7 +48,7 @@ class IndustryEndpoints:
             bypass_cache: Force fresh fetch
 
         Returns:
-            List of validated EveIndustryJob models
+            Tuple of (list of validated EveIndustryJob models, response headers)
 
         Raises:
             ValueError: If character not authenticated
@@ -64,7 +65,7 @@ class IndustryEndpoints:
         if include_completed:
             params["include_completed"] = "true"
 
-        data, _ = await self._client.request(
+        data, headers = await self._client.request(
             "GET",
             path,
             params=params,
@@ -77,8 +78,9 @@ class IndustryEndpoints:
             len(data) if isinstance(data, list) else 0,
             character_id,
         )
-        return (
+        validated = (
             [EveIndustryJob.model_validate(job) for job in data]
             if isinstance(data, list)
             else []
         )
+        return validated, headers
