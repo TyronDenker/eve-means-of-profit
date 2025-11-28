@@ -105,14 +105,14 @@ class CallbackHandler(BaseHTTPRequestHandler):
             state,
         )
 
-    def log_message(self, format_string, *args):
+    def log_message(self, format, *args):  # noqa: A002
         """Suppress default HTTP server logging."""
         # Route default HTTP server logging through module logger at debug level
         try:
-            logger.debug("%s - - %s", self.client_address[0], format_string % args)
+            logger.debug("%s - - %s", self.client_address[0], format % args)
         except Exception:
             # Avoid raising from logging
-            logger.debug("HTTP log: %s %s", self.client_address[0], format_string)
+            logger.debug("HTTP log: %s %s", self.client_address[0], format)
 
 
 class CallbackServer:
@@ -166,9 +166,11 @@ class CallbackServer:
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
-        bound_host, bound_port = self.server.server_address
+        bound_address = self.server.server_address
         logger.info(
-            "OAuth callback server started on http://%s:%s", bound_host, bound_port
+            "OAuth callback server started on http://%s:%s",
+            bound_address[0],
+            bound_address[1],
         )
 
     def stop(self):
