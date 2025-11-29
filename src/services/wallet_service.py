@@ -23,19 +23,54 @@ class WalletService:
 
     async def sync_transactions(self, character_id: int):
         """Sync wallet transactions"""
-        txs = await self._esi_client.wallet.get_transactions(
+        result = await self._esi_client.wallet.get_transactions(
             character_id, use_cache=True, bypass_cache=False
         )
+        if isinstance(result, tuple):
+            txs, headers = result
+        else:
+            txs = result
+            headers = {}
         count = await transactions.save_transactions(self._repo, character_id, txs)
-        logger.info("Synced %d transactions for character %d", count, character_id)
+        etag = headers.get("etag")
+        expires = headers.get("expires")
+        if etag or expires:
+            logger.info(
+                "Synced %d transactions for character %d (etag=%s expires=%s)",
+                count,
+                character_id,
+                etag,
+                expires,
+            )
+        else:
+            logger.info("Synced %d transactions for character %d", count, character_id)
 
     async def sync_journal(self, character_id: int):
         """Sync wallet journal entries"""
-        entries = await self._esi_client.wallet.get_journal(
+        result = await self._esi_client.wallet.get_journal(
             character_id, use_cache=True, bypass_cache=False
         )
+        # Handle (validated, headers) tuple or just validated list
+        if isinstance(result, tuple):
+            entries, headers = result
+        else:
+            entries = result
+            headers = {}
         count = await journal.save_journal_entries(self._repo, character_id, entries)
-        logger.info("Synced %d journal entries for character %d", count, character_id)
+        etag = headers.get("etag")
+        expires = headers.get("expires")
+        if etag or expires:
+            logger.info(
+                "Synced %d journal entries for character %d (etag=%s expires=%s)",
+                count,
+                character_id,
+                etag,
+                expires,
+            )
+        else:
+            logger.info(
+                "Synced %d journal entries for character %d", count, character_id
+            )
 
     async def get_transaction_history(
         self, character_id: int, days: int = 30

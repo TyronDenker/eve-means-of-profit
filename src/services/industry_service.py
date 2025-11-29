@@ -22,14 +22,35 @@ class IndustryService:
         self._repo = repository
 
     async def sync_jobs(self, character_id: int, include_completed: bool = False):
-        jobs = await self._esi_client.industry.get_jobs(
+        result = await self._esi_client.industry.get_jobs(
             character_id,
             include_completed=include_completed,
             use_cache=True,
             bypass_cache=False,
         )
+
+        # Unwrap (jobs, headers) tuple or handle legacy list-only return
+        if isinstance(result, tuple):
+            jobs, headers = result
+        else:
+            jobs = result
+            headers = {}
+
         count = await industry_jobs.save_jobs(self._repo, character_id, jobs)
-        logger.info("Synced %d industry jobs for %d", count, character_id)
+
+        # Optional header-aware logging (etag + expires for cache introspection)
+        etag = headers.get("etag")
+        expires = headers.get("expires")
+        if etag or expires:
+            logger.info(
+                "Synced %d industry jobs for %d (etag=%s expires=%s)",
+                count,
+                character_id,
+                etag,
+                expires,
+            )
+        else:
+            logger.info("Synced %d industry jobs for %d", count, character_id)
 
     async def get_active_jobs(self, character_id: int) -> list[EveIndustryJob]:
         return await industry_jobs.get_active_jobs(self._repo, character_id)

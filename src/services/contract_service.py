@@ -23,11 +23,28 @@ class ContractService:
 
     async def sync_contracts(self, character_id: int):
         """Sync contracts and return (count, contracts)."""
-        contract_list = await self._esi_client.contracts.get_contracts(
+        result = await self._esi_client.contracts.get_contracts(
             character_id, use_cache=True, bypass_cache=False
         )
+        # Handle (validated, headers) tuple or just validated list
+        if isinstance(result, tuple):
+            contract_list, headers = result
+        else:
+            contract_list = result
+            headers = {}
         count = await contracts.save_contracts(self._repo, character_id, contract_list)
-        logger.info("Synced %d contracts for %d", count, character_id)
+        etag = headers.get("etag")
+        expires = headers.get("expires")
+        if etag or expires:
+            logger.info(
+                "Synced %d contracts for %d (etag=%s expires=%s)",
+                count,
+                character_id,
+                etag,
+                expires,
+            )
+        else:
+            logger.info("Synced %d contracts for %d", count, character_id)
 
     async def sync_contract_items(self, character_id: int, contract_id: int):
         """Sync contract items and return (count, items)."""

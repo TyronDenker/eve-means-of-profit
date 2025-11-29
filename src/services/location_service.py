@@ -313,11 +313,6 @@ class LocationService:
                     len(structure_ids),
                 )
 
-        # Save updated cache (only contains player structures now)
-        if structure_ids:
-            async with self._cache_lock:
-                self._save_cache()
-
         return results
 
     def _resolve_from_sde(self, location_id: int) -> tuple[str | None, str]:
@@ -372,7 +367,7 @@ class LocationService:
             return
 
         for struct_id in structure_ids:
-            # Note: We don't skip failed structures anymore because:
+            # Note: We don't skip failed structures because:
             # 1. Auth tokens can be refreshed
             # 2. Access permissions can change
             # 3. We want to retry to get real names instead of placeholders
@@ -383,44 +378,44 @@ class LocationService:
                     struct_id,
                     character_id,
                 )
-                structure = await self._client.universe.get_structure_info(
+                structure, _ = await self._client.universe.get_structure_info(
                     structure_id=struct_id, character_id=character_id, use_cache=True
                 )
 
                 logger.debug(
                     "Successfully fetched structure %d: name='%s' owner=%d system=%d",
-                    struct_id,
+                    structure.structure_id,
                     structure.name,
-                    structure.owner_id,
-                    structure.solar_system_id,
+                    getattr(structure, "owner_id", -1),
+                    getattr(structure, "solar_system_id", -1),
                 )
 
-                # Update cache and results
                 now = datetime.now(UTC)
 
+                owner_id_val = getattr(structure, "owner_id", None)
+
                 # Get custom name if previously set in cache
-                existing = self._cache.get(struct_id)
+                existing = self._cache.get(structure.structure_id)
                 custom_name = existing.custom_name if existing else None
 
                 loc = LocationInfo(
-                    location_id=struct_id,
+                    location_id=structure.structure_id,
                     name=structure.name,
                     category="structure",
                     last_checked=now,
-                    owner_id=character_id,
+                    owner_id=owner_id_val,
                     custom_name=custom_name,
                     is_placeholder=False,
                 )
 
-                async with self._cache_lock:
-                    self._cache[struct_id] = loc
-                    results[struct_id] = loc
-                    # Remove from failed structures if it was there
-                    self._failed_structures.discard(struct_id)
+                # Return resolved structure without mutating service cache
+                results[structure.structure_id] = loc
+                # Maintain minimal internal state unrelated to cache
+                self._failed_structures.discard(structure.structure_id)
 
                 logger.debug(
                     "Successfully resolved structure %d: %s (custom: %s)",
-                    struct_id,
+                    structure.structure_id,
                     structure.name,
                     custom_name or "none",
                 )
@@ -444,36 +439,45 @@ class LocationService:
                     logger.debug("Failed to resolve structure %d: %s", struct_id, e)
 
                 # Check if we have a previous cached name to keep using
-                async with self._cache_lock:
-                    existing = self._cache.get(struct_id)
+                # Read-only existing cache entry if present; avoid mutating cache
+                existing = self._cache.get(struct_id)
 
-                    if existing and not existing.is_placeholder:
-                        # Keep the existing name (access was lost but we know the name)
-                        logger.debug(
-                            "Structure %d: Keeping last known name '%s' (access lost)",
-                            struct_id,
-                            existing.custom_name or existing.name,
-                        )
-                        # Update last_checked to prevent immediate re-resolution
-                        existing.last_checked = datetime.now(UTC)
-                        results[struct_id] = existing
-                    else:
-                        # No previous name - return placeholder for UI display only (don't cache it)
-                        logger.debug(
-                            "Structure %d: No previous name available, using placeholder for display",
-                            struct_id,
-                        )
-                        placeholder = LocationInfo(
-                            location_id=struct_id,
-                            name=f"Structure {struct_id}",
-                            category="structure",
-                            last_checked=datetime.now(UTC),
-                            owner_id=character_id,
-                            custom_name=(existing.custom_name if existing else None),
-                            is_placeholder=True,
-                        )
-                        # Return placeholder for immediate use but DON'T save to cache
-                        results[struct_id] = placeholder
+                if existing and not existing.is_placeholder:
+                    # Keep the existing name (access was lost but we know the name)
+                    logger.debug(
+                        "Structure %d: Keeping last known name '%s' (access lost)",
+                        struct_id,
+                        existing.custom_name or existing.name,
+                    )
+                    # Return a copy with updated last_checked for immediate use
+                    results[struct_id] = LocationInfo(
+                        location_id=existing.location_id,
+                        name=existing.name,
+                        category=existing.category,
+                        last_checked=datetime.now(UTC),
+                        owner_id=existing.owner_id,
+                        custom_name=existing.custom_name,
+                        is_placeholder=False,
+                    )
+                else:
+                    # No previous name - return placeholder for UI display only (don't cache it)
+                    logger.debug(
+                        "Structure %d: No previous name available, using placeholder for display",
+                        struct_id,
+                    )
+                    placeholder = LocationInfo(
+                        location_id=struct_id,
+                        name=f"Structure {struct_id}",
+                        category="structure",
+                        last_checked=datetime.now(UTC),
+                        owner_id=character_id,
+                        custom_name=(existing.custom_name if existing else None)
+                        if existing
+                        else None,
+                        is_placeholder=True,
+                    )
+                    # Return placeholder for immediate use but DON'T save to cache
+                    results[struct_id] = placeholder
 
                 # Continue with other structures
 

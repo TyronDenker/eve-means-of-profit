@@ -23,11 +23,27 @@ class MarketService:
 
     async def sync_orders(self, character_id: int):
         """Sync market orders for a character."""
-        orders = await self._esi_client.market.get_orders(
+        result = await self._esi_client.market.get_orders(
             character_id, use_cache=True, bypass_cache=False
         )
+        if isinstance(result, tuple):
+            orders, headers = result
+        else:
+            orders = result
+            headers = {}
         count = await market_orders.save_orders(self._repo, character_id, orders)
-        logger.info("Synced %d market orders for character %d", count, character_id)
+        etag = headers.get("etag")
+        expires = headers.get("expires")
+        if etag or expires:
+            logger.info(
+                "Synced %d market orders for character %d (etag=%s expires=%s)",
+                count,
+                character_id,
+                etag,
+                expires,
+            )
+        else:
+            logger.info("Synced %d market orders for character %d", count, character_id)
 
     async def get_order_history(
         self, character_id: int, limit: int = 100
