@@ -12,6 +12,7 @@ Domain-oriented submodules:
 """
 
 from .asset_service import AssetService
+from .character_service import CharacterService
 from .contract_service import ContractService
 from .industry_service import IndustryService
 from .location_service import LocationService
@@ -21,6 +22,7 @@ from .wallet_service import WalletService
 
 __all__ = [
     "AssetService",
+    "CharacterService",
     "ContractService",
     "IndustryService",
     "LocationService",
