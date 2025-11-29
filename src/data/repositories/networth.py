@@ -54,15 +54,15 @@ async def save_snapshot(
             totals.industry_job_value,
         ),
     )
+    if cursor.lastrowid is None:
+        raise RuntimeError("Failed to retrieve lastrowid for networth snapshot.")
     snapshot_id = int(cursor.lastrowid)
-
     await repo.commit()
     logger.info(
         "Saved net worth snapshot %d for character %d",
         snapshot_id,
         character_id,
     )
-
     return snapshot_id
 
 

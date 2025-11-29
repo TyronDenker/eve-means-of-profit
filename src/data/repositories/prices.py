@@ -165,6 +165,8 @@ async def save_snapshot(
         len(price_records),
     )
 
+    if snapshot_id is None:
+        raise RuntimeError("Failed to retrieve lastrowid for price snapshot.")
     return int(snapshot_id)
 
 

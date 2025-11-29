@@ -58,6 +58,8 @@ async def save_custom_snapshot(
         """,
         (snapshot_time.isoformat(), "custom", len(records), notes),
     )
+    if cursor.lastrowid is None:
+        raise RuntimeError("Failed to retrieve lastrowid for custom price snapshot.")
     snapshot_id = int(cursor.lastrowid)
 
     if records:

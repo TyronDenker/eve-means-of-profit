@@ -85,6 +85,8 @@ async def save_snapshot(
         """,
         (character_id, snapshot_time.isoformat(), len(assets), notes),
     )
+    if cursor.lastrowid is None:
+        raise RuntimeError("Failed to retrieve lastrowid for asset snapshot.")
     snapshot_id = int(cursor.lastrowid)
 
     # Get current assets for comparison
