@@ -27,6 +27,9 @@ class NetWorthSnapshot(BaseModel):
     industry_job_value: float = Field(
         ..., ge=0, description="Estimated output value of active jobs"
     )
+    plex_vault: float = Field(
+        0.0, ge=0, description="Value of PLEX in vault (quantity * price)"
+    )
 
     @computed_field  # type: ignore[misc]
     @property
@@ -40,6 +43,7 @@ class NetWorthSnapshot(BaseModel):
             + self.contract_value
             + self.total_asset_value
             + self.industry_job_value
+            + self.plex_vault
         )
 
 

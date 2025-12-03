@@ -39,8 +39,8 @@ async def save_snapshot(
         INSERT INTO networth_snapshots (
             character_id, snapshot_time, total_asset_value, wallet_balance,
             market_escrow, market_sell_value, contract_collateral,
-            contract_value, industry_job_value
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            contract_value, industry_job_value, plex_vault
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             character_id,
@@ -52,6 +52,7 @@ async def save_snapshot(
             totals.contract_collateral,
             totals.contract_value,
             totals.industry_job_value,
+            totals.plex_vault,
         ),
     )
     if cursor.lastrowid is None:
@@ -84,7 +85,7 @@ async def get_latest_networth(
             snapshot_id, character_id, snapshot_time,
             total_asset_value,
             wallet_balance, market_escrow, market_sell_value,
-            contract_collateral, contract_value, industry_job_value,
+            contract_collateral, contract_value, industry_job_value, plex_vault
         FROM networth_snapshots
         WHERE character_id = ?
         ORDER BY snapshot_time DESC
@@ -117,7 +118,7 @@ async def get_networth_history(
             snapshot_id, character_id, snapshot_time,
             total_asset_value,
             wallet_balance, market_escrow, market_sell_value,
-            contract_collateral, contract_value, industry_job_value,
+            contract_collateral, contract_value, industry_job_value, plex_vault
         FROM networth_snapshots
         WHERE character_id = ?
         ORDER BY snapshot_time DESC
@@ -146,7 +147,7 @@ async def get_all_characters_networth(
             ns.snapshot_id, ns.character_id, ns.snapshot_time,
             ns.total_asset_value,
             ns.wallet_balance, ns.market_escrow, ns.market_sell_value,
-            ns.contract_collateral, ns.contract_value, ns.industry_job_value,
+            ns.contract_collateral, ns.contract_value, ns.industry_job_value, ns.plex_vault
         FROM networth_snapshots ns
         INNER JOIN (
             SELECT character_id, MAX(snapshot_time) as max_time
@@ -154,7 +155,7 @@ async def get_all_characters_networth(
             GROUP BY character_id
         ) latest ON ns.character_id = latest.character_id
                  AND ns.snapshot_time = latest.max_time
-        ORDER BY ns.total_net_worth DESC
+        ORDER BY ns.snapshot_time DESC
         """
     )
 
