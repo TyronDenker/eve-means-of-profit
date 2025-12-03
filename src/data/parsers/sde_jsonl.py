@@ -246,6 +246,28 @@ class SDEJsonlParser:
 
         return stations
 
+    def load_npc_station_system_ids(self) -> dict[int, int]:
+        """Load NPC station to solar system ID mapping from npcStations.jsonl.
+
+        Returns:
+            Dictionary mapping station ID to solar system ID
+
+        """
+        station_systems = {}
+        try:
+            for data in self._load_jsonl("npcStations.jsonl"):
+                station_id = data.get("_key")
+                system_id = data.get("solarSystemID")
+
+                if station_id is not None and system_id is not None:
+                    station_systems[int(station_id)] = int(system_id)
+        except FileNotFoundError as e:
+            logger.warning(f"NPC stations file not found: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load NPC station system IDs: {e}")
+
+        return station_systems
+
     def load_region_names(self) -> dict[int, str]:
         """Load region IDs and names from mapRegions.jsonl.
 
