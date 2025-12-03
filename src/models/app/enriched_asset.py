@@ -46,6 +46,8 @@ class EnrichedAsset(BaseModel):
     constellation_name: str = ""
     system_id: int | None = None
     system_name: str = ""
+    planet_id: int | None = None
+    planet_name: str = ""
     station_id: int | None = None
     station_name: str = ""
     structure_id: int | None = None  # ID of the player structure (if in a structure)
@@ -89,12 +91,85 @@ class EnrichedAsset(BaseModel):
             return self.structure_name
         if self.station_name:
             return self.station_name
+        if self.planet_name:
+            return self.planet_name
         if self.system_name:
             return f"{self.system_name} (Space)"
-        # Show location type and flag for debugging unresolved locations
-        return (
-            f"Location #{self.location_id} ({self.location_type}/{self.location_flag})"
-        )
+        # Friendly mapping for common EVE location flags when unresolved
+        flag_map = {
+            "Hangar": "Station Hangar",
+            "CorpDeliveries": "Corp Deliveries",
+            "CorpHangar": "Corp Hangar",
+            "CorpSAG1": "Corp Hangar Division 1",
+            "CorpSAG2": "Corp Hangar Division 2",
+            "CorpSAG3": "Corp Hangar Division 3",
+            "CorpSAG4": "Corp Hangar Division 4",
+            "CorpSAG5": "Corp Hangar Division 5",
+            "CorpSAG6": "Corp Hangar Division 6",
+            "CorpSAG7": "Corp Hangar Division 7",
+            "Cargo": "Ship Cargo",
+            "FleetHangar": "Fleet Hangar",
+            "ShipHangar": "Ship Hangar",
+            "DroneBay": "Drone Bay",
+            "FighterBay": "Fighter Bay",
+            "FighterTube": "Fighter Tube",
+            "RigSlot0": "Fitted: Rig Slot 0",
+            "RigSlot1": "Fitted: Rig Slot 1",
+            "RigSlot2": "Fitted: Rig Slot 2",
+            "RigSlot3": "Fitted: Rig Slot 3",
+            "HiSlot0": "Fitted: High Slot 0",
+            "HiSlot1": "Fitted: High Slot 1",
+            "HiSlot2": "Fitted: High Slot 2",
+            "HiSlot3": "Fitted: High Slot 3",
+            "HiSlot4": "Fitted: High Slot 4",
+            "HiSlot5": "Fitted: High Slot 5",
+            "HiSlot6": "Fitted: High Slot 6",
+            "HiSlot7": "Fitted: High Slot 7",
+            "MedSlot0": "Fitted: Mid Slot 0",
+            "MedSlot1": "Fitted: Mid Slot 1",
+            "MedSlot2": "Fitted: Mid Slot 2",
+            "MedSlot3": "Fitted: Mid Slot 3",
+            "MedSlot4": "Fitted: Mid Slot 4",
+            "MedSlot5": "Fitted: Mid Slot 5",
+            "MedSlot6": "Fitted: Mid Slot 6",
+            "MedSlot7": "Fitted: Mid Slot 7",
+            "LoSlot0": "Fitted: Low Slot 0",
+            "LoSlot1": "Fitted: Low Slot 1",
+            "LoSlot2": "Fitted: Low Slot 2",
+            "LoSlot3": "Fitted: Low Slot 3",
+            "LoSlot4": "Fitted: Low Slot 4",
+            "LoSlot5": "Fitted: Low Slot 5",
+            "LoSlot6": "Fitted: Low Slot 6",
+            "LoSlot7": "Fitted: Low Slot 7",
+            "SubsystemSlot0": "Fitted: Subsystem Slot 0",
+            "SubsystemSlot1": "Fitted: Subsystem Slot 1",
+            "SubsystemSlot2": "Fitted: Subsystem Slot 2",
+            "SubsystemSlot3": "Fitted: Subsystem Slot 3",
+            "ServiceSlot0": "Structure Service Slot 0",
+            "ServiceSlot1": "Structure Service Slot 1",
+            "ServiceSlot2": "Structure Service Slot 2",
+            "ServiceSlot3": "Structure Service Slot 3",
+            "ServiceSlot4": "Structure Service Slot 4",
+            "ServiceSlot5": "Structure Service Slot 5",
+            "ServiceSlot6": "Structure Service Slot 6",
+            "ServiceSlot7": "Structure Service Slot 7",
+            "SpecializedFuelBay": "Fuel Bay",
+            "SpecializedOreHold": "Ore Hold",
+            "SpecializedGasHold": "Gas Hold",
+            "SpecializedMineralHold": "Mineral Hold",
+            "SpecializedSalvageHold": "Salvage Hold",
+            "SpecializedShipHold": "Ship Hold",
+            "SpecializedSmallShipHold": "Small Ship Hold",
+            "SpecializedMediumShipHold": "Medium Ship Hold",
+            "SpecializedLargeShipHold": "Large Ship Hold",
+            "SpecializedIndustrialShipHold": "Industrial Ship Hold",
+            "SpecializedAmmoHold": "Ammo Hold",
+            "SpecializedCommandCenterHold": "Command Center Hold",
+            "SpecializedPlanetaryCommoditiesHold": "Planetary Commodities Hold",
+            "SpecializedMaterialBay": "Material Bay",
+        }
+        friendly_flag = flag_map.get(self.location_flag, self.location_flag)
+        return f"Location #{self.location_id} ({self.location_type}/{friendly_flag})"
 
     @computed_field  # type: ignore[misc]
     @property

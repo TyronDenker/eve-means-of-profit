@@ -32,3 +32,7 @@ class LocationInfo(BaseModel):
         default=False,
         description="True if name couldn't be resolved and is a placeholder",
     )
+    solar_system_id: int | None = Field(
+        default=None,
+        description="Solar system ID where this location exists (for structures/stations)",
+    )

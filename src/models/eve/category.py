@@ -7,7 +7,7 @@ class EveCategory(BaseModel):
     """Represents an EVE Online category."""
 
     category_id: int = Field(
-        ..., ge=0, description="The unique identifier for the Eve category."
+        ..., ge=0, description="The unique identifier for the Eve category.", alias="id"
     )
     icon_id: int | None = Field(None, ge=0, description="The icon ID for the category.")
     name: str = Field(..., description="The name of the category.")

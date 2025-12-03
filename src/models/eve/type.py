@@ -7,7 +7,7 @@ class EveType(BaseModel):
     """Represents an EVE Online type with various attributes."""
 
     type_id: int = Field(
-        ..., ge=0, description="The unique identifier for the Eve type."
+        ..., ge=0, description="The unique identifier for the Eve type.", alias="id"
     )
     base_price: float | None = Field(
         None,

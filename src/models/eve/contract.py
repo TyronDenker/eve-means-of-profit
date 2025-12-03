@@ -39,7 +39,7 @@ class EveContractItem(BaseModel):
     """Represents an item in a contract from ESI."""
 
     record_id: int = Field(..., description="Unique record ID")
-    contract_id: int = Field(..., description="Parent contract")
+    contract_id: int | None = Field(None, description="Parent contract (set by client)")
     type_id: int = Field(..., description="Item type")
     quantity: int = Field(..., description="Quantity")
     is_included: bool = Field(..., description="True = included, False = requested")

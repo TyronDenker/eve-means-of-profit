@@ -7,7 +7,7 @@ class EveGroup(BaseModel):
     """Represents an EVE Online group."""
 
     group_id: int = Field(
-        ..., ge=0, description="The unique identifier for the Eve group."
+        ..., ge=0, description="The unique identifier for the Eve group.", alias="id"
     )
     anchorable: bool = Field(..., description="Whether the group is anchorable.")
     anchored: bool = Field(..., description="Whether the group is anchored.")
