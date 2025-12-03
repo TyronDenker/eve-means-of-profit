@@ -141,8 +141,12 @@ class ContractsEndpoints:
             len(data) if isinstance(data, list) else 0,
             contract_id,
         )
-        return (
-            [EveContractItem.model_validate(item) for item in data]
-            if isinstance(data, list)
-            else []
-        )
+        if isinstance(data, list):
+            # Validate items and set contract_id (not provided by ESI)
+            items = []
+            for item in data:
+                validated = EveContractItem.model_validate(item)
+                validated.contract_id = contract_id
+                items.append(validated)
+            return items
+        return []
