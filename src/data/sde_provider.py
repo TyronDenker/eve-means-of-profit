@@ -41,6 +41,7 @@ class SDEProvider:
 
         # Location name caches
         self._npc_station_names_cache: dict[int, str] | None = None
+        self._npc_station_system_ids_cache: dict[int, int] | None = None
         self._region_names_cache: dict[int, str] | None = None
         self._constellation_names_cache: dict[int, str] | None = None
         self._solar_system_names_cache: dict[int, str] | None = None
@@ -257,6 +258,19 @@ class SDEProvider:
         """
         return self._load_npc_station_names().get(station_id)
 
+    def get_npc_station_system_id(self, station_id: int) -> int | None:
+        """Get NPC station's solar system ID by station ID.
+
+        Args:
+            station_id: Station ID to look up
+
+        Returns:
+            Solar system ID or None if not found
+        """
+        # Load station system mapping
+        station_systems = self._load_npc_station_system_ids()
+        return station_systems.get(station_id)
+
     def get_region_name(self, region_id: int) -> str | None:
         """Get region name by ID.
 
@@ -289,6 +303,14 @@ class SDEProvider:
             Solar system name or None if not found
         """
         return self._load_solar_system_names().get(system_id)
+
+    def get_all_solar_systems(self) -> dict[int, str]:
+        """Get all solar systems.
+
+        Returns:
+            Dictionary mapping solar system ID to name
+        """
+        return self._load_solar_system_names()
 
     def clear_cache(self) -> None:
         """Clear all cached data to free memory."""
@@ -386,6 +408,22 @@ class SDEProvider:
                 f"Loaded {len(self._npc_station_names_cache)} NPC station names"
             )
         return self._npc_station_names_cache
+
+    def _load_npc_station_system_ids(self) -> dict[int, int]:
+        """Load and cache NPC station to system ID mapping.
+
+        Returns:
+            Dictionary mapping station ID to solar system ID
+        """
+        if self._npc_station_system_ids_cache is None:
+            logger.info("Loading NPC station system IDs from SDE...")
+            self._npc_station_system_ids_cache = (
+                self._parser.load_npc_station_system_ids()
+            )
+            logger.info(
+                f"Loaded {len(self._npc_station_system_ids_cache)} station-system mappings"
+            )
+        return self._npc_station_system_ids_cache
 
     def _load_region_names(self) -> dict[int, str]:
         """Load and cache region names.
