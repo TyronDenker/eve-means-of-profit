@@ -358,6 +358,8 @@ CREATE_NETWORTH_SNAPSHOTS_TABLE = """
 CREATE TABLE IF NOT EXISTS networth_snapshots (
     snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
     character_id INTEGER NOT NULL,
+    account_id INTEGER,
+    snapshot_group_id INTEGER,
     snapshot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     total_asset_value REAL NOT NULL DEFAULT 0,
     hangar_value REAL NOT NULL DEFAULT 0,
@@ -377,6 +379,19 @@ CREATE TABLE IF NOT EXISTS networth_snapshots (
 CREATE_NETWORTH_SNAPSHOTS_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_networth_character_time
 ON networth_snapshots(character_id, snapshot_time DESC);
+CREATE INDEX IF NOT EXISTS idx_networth_group
+ON networth_snapshots(snapshot_group_id);
+CREATE INDEX IF NOT EXISTS idx_networth_account
+ON networth_snapshots(account_id);
+"""
+
+CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE = """
+CREATE TABLE IF NOT EXISTS networth_snapshot_groups (
+    snapshot_group_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    label TEXT
+);
 """
 
 CREATE_NETWORTH_COMPONENTS_TABLE = """
@@ -429,6 +444,7 @@ ALL_TABLES = [
     CREATE_INDUSTRY_JOBS_INDEXES,
     CREATE_NETWORTH_SNAPSHOTS_TABLE,
     CREATE_NETWORTH_SNAPSHOTS_INDEXES,
+    CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE,
 ]
 
 __all__ = [
@@ -439,6 +455,7 @@ __all__ = [
     "CREATE_ASSET_SNAPSHOTS_TABLE",
     "CREATE_CURRENT_ASSETS_INDEXES",
     "CREATE_CURRENT_ASSETS_TABLE",
+    "CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE",
     "CREATE_PRICE_HISTORY_INDEXES",
     "CREATE_PRICE_HISTORY_TABLE",
     "CREATE_PRICE_SNAPSHOTS_INDEX",
