@@ -1331,6 +1331,11 @@ class ESIClient:
             )
             requires_auth = True
 
+        # Check cache for existing response
+        cached_data, cached_headers, cached_etag = self._check_cached_response(
+            method, path, params, use_cache
+        )
+
         # Ensure authentication token is valid if required
         if requires_auth and owner_id is not None:
             await self._ensure_auth_token(owner_id)
@@ -1339,11 +1344,6 @@ class ESIClient:
         request_params = dict(original_params)
         request_params.setdefault(
             "datasource", str(self.datasource) if self.datasource is not None else None
-        )
-
-        # Check cache for existing response
-        cached_data, cached_headers, cached_etag = self._check_cached_response(
-            method, path, params, use_cache
         )
 
         # Return cached data if still valid
