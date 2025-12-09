@@ -73,15 +73,27 @@ class ESIAuth:
         self._current_callback_server: CallbackServer | None = None
 
     def _load_tokens(self) -> None:
-        """Load tokens from disk."""
-        if self.token_file.exists():
-            try:
-                with open(self.token_file) as f:
-                    self._tokens = json.load(f)
-                logger.debug("Loaded %d tokens from file", len(self._tokens))
-            except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Failed to load tokens from file: %s", e)
-                self._tokens = {}
+        """Load tokens from disk.
+
+        Reads the token file and parses it into the internal tokens dictionary.
+        If the file doesn't exist or is invalid, initializes an empty dictionary.
+        """
+        if not self.token_file.exists():
+            self._tokens = {}
+            logger.debug("Token file does not exist; starting with empty tokens")
+            return
+
+        try:
+            with open(self.token_file, encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    self._tokens = data
+                    logger.debug("Loaded %d tokens from file", len(data))
+                    return
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load tokens from file: %s", e)
+
+        self._tokens = {}
 
     def _save_tokens(self) -> None:
         """Save tokens to disk atomically to prevent corruption."""
