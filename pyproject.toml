@@ -24,6 +24,7 @@ github = "https://github.com/tyrondenker/eve-means-of-profit"
 [tool.additional_contact]
 discord = "tyrondenker"
 eve = "Tyron Denker"
+discord_invite = "https://discord.gg/MeVk5ey2Qu"
 
 [dependency-groups]
 dev = [
@@ -159,3 +160,9 @@ python-version = "3.13"
 [tool.ty.src]
 include = ["src", "tests"]
 exclude = ["**/__pycache__", "**/*.pyc"]
+
+[tool.referrals]
+markee_link = "https://store.markeedragon.com/affiliate.php?id=1167&redirect=index.php?cat=4"
+markee_code_1 = "MOP"
+markee_code_2 = "TYRON"
+eve_referral = "https://www.eveonline.com/signup?invc=3862ab66-7627-401c-8ccc-2b463ab6c7ef"

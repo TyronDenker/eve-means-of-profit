@@ -72,10 +72,19 @@ def _read_pyproject() -> dict:
             tool_meta = {}
             if isinstance(tool_table, dict):
                 tool_meta = tool_table.get("additional_contact") or {}
+                # Extract referrals from [tool.referrals]
+                referrals = (
+                    tool_table.get("referrals", {})
+                    if isinstance(tool_table, dict)
+                    else {}
+                )
 
             github = urls.get("github") or urls.get("repository")
             discord = tool_meta.get("discord") if isinstance(tool_meta, dict) else None
             eve = tool_meta.get("eve") if isinstance(tool_meta, dict) else None
+            discord_invite = (
+                tool_meta.get("discord_invite") if isinstance(tool_meta, dict) else None
+            )
 
             return {
                 "name": project.get("name", "eve-means-of-profit"),
@@ -84,7 +93,9 @@ def _read_pyproject() -> dict:
                 "email": email,
                 "github": github,
                 "discord": discord,
+                "discord_invite": discord_invite,
                 "eve": eve,
+                "referrals": referrals,
             }
     except Exception as e:
         # Fallback to defaults if pyproject.toml can't be read
@@ -342,6 +353,15 @@ class AppConfig(BaseSettings):
     contact_eve: str | None = Field(
         default_factory=lambda: _PROJECT_METADATA.get("eve"),
         description="Optional EVE character/contact from pyproject urls",
+    )
+    contact_discord_invite: str | None = Field(
+        default_factory=lambda: _PROJECT_METADATA.get("discord_invite"),
+        description="Discord invite link from pyproject [tool.additional_contact]",
+    )
+
+    referrals: dict[str, str] = Field(
+        default_factory=lambda: _PROJECT_METADATA.get("referrals", {}),
+        description="Referral links and codes from pyproject.toml [tool.referrals]",
     )
 
     # Logging
