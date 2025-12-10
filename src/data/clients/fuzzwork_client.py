@@ -26,6 +26,7 @@ from typing import Any
 import httpx
 
 from utils import global_config
+from utils.progress_callback import ProgressCallback, ProgressPhase, ProgressUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,15 @@ class FuzzworkClient:
                 self.csv_path.unlink()
             if self.metadata_path.exists():
                 self.metadata_path.unlink()
-            logger.info("Fuzzwork client cache cleared")
+            logger.info("Fuzzwork client cache cleared (CSV and ETag metadata removed)")
         except Exception as e:
             logger.warning("Failed to clear files: %s", e)
 
     async def fetch_aggregate_csv(
-        self, force: bool = False, check_etag: bool = True
+        self,
+        force: bool = False,
+        check_etag: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> str:
         """Fetch aggregate CSV data respecting metadata timing rules.
 
@@ -94,6 +98,11 @@ class FuzzworkClient:
           ensure at least 5 minutes have passed since the last ETag check to
           avoid frequent remote checks.
         - If ETag differs, download fresh content.
+
+        Args:
+            force: If True, download fresh CSV regardless of cache.
+            check_etag: If True, perform ETag check when cache is old.
+            progress_callback: Optional callback to report progress updates.
         """
         self._initialize_http_client()
 
@@ -102,7 +111,7 @@ class FuzzworkClient:
         metadata = self._read_metadata() or {}
 
         if force or local_csv is None:
-            return await self._download_and_save()
+            return await self._download_and_save(progress_callback)
 
         # We have a local file. Determine whether to check ETag based on last_modified
         last_modified_iso = metadata.get("last_modified")
@@ -193,14 +202,38 @@ class FuzzworkClient:
         metadata["last_checked"] = now.isoformat()
 
         cached_etag = metadata.get("etag")
-        if remote_etag and cached_etag and remote_etag == cached_etag:
-            logger.info("ETag match - using cached CSV")
+        if not cached_etag:
+            # Case (a): Cached ETag is missing (first time or cleared)
+            logger.info(
+                "ETag not previously cached (first download or cache cleared); "
+                "downloading fresh CSV"
+            )
+            metadata["etag_present"] = False
+            return await self._download_and_save(progress_callback)
+        if remote_etag and remote_etag != cached_etag:
+            # Case (b): Remote ETag differs from cached ETag - data was updated
+            logger.info(
+                "Remote ETag changed from '%s' to '%s'; downloading fresh CSV",
+                cached_etag,
+                remote_etag,
+            )
+            metadata["etag_present"] = True
+            return await self._download_and_save(progress_callback)
+        if remote_etag and remote_etag == cached_etag:
+            # ETag match - use cached copy
+            logger.info("ETag match (%s) - using cached CSV", remote_etag)
+            metadata["etag_present"] = True
             self._write_metadata(metadata)
             return local_csv
-
-        # ETag differs (or missing cached ETag) -> download fresh
-        logger.info("ETag changed or missing - downloading fresh CSV")
-        return await self._download_and_save()
+        # Remote ETag missing but we have a cached one - use cached
+        logger.debug(
+            "Remote ETag missing but cached copy available (cached: %s); "
+            "using cached CSV",
+            cached_etag,
+        )
+        metadata["etag_present"] = True
+        self._write_metadata(metadata)
+        return local_csv
 
     async def close(self) -> None:
         if self._http_client:
@@ -246,13 +279,59 @@ class FuzzworkClient:
         except Exception as e:
             logger.warning("Failed to write CSV file: %s", e)
 
-    async def _download_and_save(self) -> str:
-        """Download the gzipped CSV, decompress, save and update metadata."""
+    async def _download_and_save(
+        self, progress_callback: ProgressCallback | None = None
+    ) -> str:
+        """Download the gzipped CSV, decompress, save and update metadata.
+
+        Args:
+            progress_callback: Optional callback to report progress updates.
+        """
         self._initialize_http_client()
         assert self._http_client is not None
 
+        # Progress: Starting
+        if progress_callback:
+            progress_callback(
+                ProgressUpdate(
+                    operation="Fuzzwork CSV Download",
+                    character_id=None,
+                    phase=ProgressPhase.STARTING,
+                    current=0,
+                    total=0,
+                    message="Connecting to Fuzzwork server...",
+                )
+            )
+
+        # Progress: Fetching/Downloading
+        if progress_callback:
+            progress_callback(
+                ProgressUpdate(
+                    operation="Fuzzwork CSV Download",
+                    character_id=None,
+                    phase=ProgressPhase.FETCHING,
+                    current=0,
+                    total=0,
+                    message="Downloading compressed CSV...",
+                )
+            )
+
         resp = await self._http_client.get(AGGREGATE_CSV_URL)
         resp.raise_for_status()
+
+        # Progress: Processing/Decompressing
+        if progress_callback:
+            progress_callback(
+                ProgressUpdate(
+                    operation="Fuzzwork CSV Download",
+                    character_id=None,
+                    phase=ProgressPhase.PROCESSING,
+                    current=0,
+                    total=0,
+                    message="Decompressing CSV data...",
+                    detail=f"Downloaded {len(resp.content)} bytes",
+                )
+            )
 
         # Decompress
         csv_bytes = gzip.decompress(resp.content)
@@ -270,6 +349,20 @@ class FuzzworkClient:
             except Exception:
                 last_modified_iso = None
 
+        # Progress: Saving
+        if progress_callback:
+            progress_callback(
+                ProgressUpdate(
+                    operation="Fuzzwork CSV Download",
+                    character_id=None,
+                    phase=ProgressPhase.SAVING,
+                    current=0,
+                    total=0,
+                    message="Saving CSV to cache...",
+                    detail=f"Decompressed size: {len(csv_text.encode('utf-8'))} bytes",
+                )
+            )
+
         metadata = {
             "last_updated": datetime.now(UTC).isoformat(),
             "last_checked": datetime.now(UTC).isoformat(),
@@ -285,4 +378,19 @@ class FuzzworkClient:
         logger.info(
             "Downloaded and cached fresh fuzzwork CSV (%d bytes)", metadata["file_size"]
         )
+
+        # Progress: Complete
+        if progress_callback:
+            progress_callback(
+                ProgressUpdate(
+                    operation="Fuzzwork CSV Download",
+                    character_id=None,
+                    phase=ProgressPhase.COMPLETE,
+                    current=1,
+                    total=1,
+                    message="CSV download complete",
+                    detail=f"Saved {metadata['file_size']} bytes",
+                )
+            )
+
         return csv_text
