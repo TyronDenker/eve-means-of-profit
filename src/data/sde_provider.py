@@ -1,7 +1,13 @@
 """SDE Provider for high-level data access and caching."""
 
 import logging
+import os
+import pickle
+import threading
 from collections import defaultdict
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TypedDict
 
 from data.parsers import SDEJsonlParser
 from models.eve import (
@@ -10,8 +16,31 @@ from models.eve import (
     EveMarketGroup,
     EveType,
 )
+from utils.config import get_config
 
 logger = logging.getLogger(__name__)
+
+
+class SDEMetadata(TypedDict):
+    """Metadata about when and how caches were built."""
+
+    computed_at: str
+    total_types: int
+    total_groups: int
+    total_categories: int
+    total_market_groups: int
+    total_npc_stations: int
+    total_blueprint_types: int
+
+
+# Minimum expected sizes for integrity validation
+MIN_EXPECTED_CACHE_SIZES: dict[str, int] = {
+    "types_cache": 1000,  # EVE has tens of thousands of types
+    "groups_cache": 100,  # EVE has hundreds of groups
+    "categories_cache": 10,  # EVE has dozens of categories
+    "market_groups_cache": 100,  # EVE has hundreds of market groups
+    "npc_stations_cache": 100,  # There are many NPC stations
+}
 
 
 class SDEProvider:
@@ -23,12 +52,19 @@ class SDEProvider:
     - Memory management: Clear caches when needed
     """
 
-    def __init__(self, parser: SDEJsonlParser):
+    def __init__(
+        self,
+        parser: SDEJsonlParser,
+        *,
+        background_build: bool = True,
+        persist_path: str | Path | None = None,
+    ):
         """Initialize the SDE provider.
 
         Args:
             parser: SDEJsonlParser instance for loading SDE data.
-
+            background_build: Whether to build caches/indices in a background thread.
+            persist_path: Optional path to persist/load prebuilt caches/indices.
         """
         self._parser = parser
 
@@ -49,14 +85,45 @@ class SDEProvider:
         # Index hashmaps - for fast filtered queries
         # Format: dict[filter_value, list[object_id]]
         # These are always built when their corresponding cache is loaded
-        self._types_by_group_index: dict[int, list[int]] = {}
-        self._types_by_category_index: dict[int, list[int]] = {}
-        self._types_by_market_group_index: dict[int, list[int]] = {}
-        self._published_types_ids: set[int] = set()
-        self._groups_by_category_index: dict[int, list[int]] = {}
+        self._types_by_group_index: dict[int, list[int]] | None = None
+        self._types_by_category_index: dict[int, list[int]] | None = None
+        self._types_by_market_group_index: dict[int, list[int]] | None = None
+        self._published_types_ids: set[int] | None = None
+        self._groups_by_category_index: dict[int, list[int]] | None = None
 
         # Blueprint type IDs cache
         self._blueprint_type_ids_cache: set[int] | None = None
+
+        # SDE metadata
+        self._sde_metadata: SDEMetadata | None = None
+
+        # Persistence / background build
+        self._persist_path: Path = Path(
+            persist_path or (get_config().app.user_data_dir / "sde_indices.pkl")
+        )
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            logger.debug(
+                "Could not create persist directory for SDE indices", exc_info=True
+            )
+
+        self._background_ready = threading.Event()
+        # Attempt to load persisted caches; if not available, build in background.
+        if self._load_persisted_indices():
+            self._background_ready.set()
+        elif background_build:
+            thread = threading.Thread(
+                target=self._build_and_persist_background,
+                name="sde-background-build",
+                daemon=True,
+            )
+            thread.start()
+        else:
+            # Synchronous fallback
+            self._build_all_indices_sync()
+            self._persist_indices()
+            self._background_ready.set()
 
     def get_type_by_id(self, type_id: int) -> EveType | None:
         """Get a type by its ID.
@@ -119,7 +186,9 @@ class SDEProvider:
 
         """
         types_cache = self._load_types()
-        type_ids = self._types_by_group_index.get(group_id, [])
+        # _load_types ensures indices are built
+        index = self._types_by_group_index or {}
+        type_ids = index.get(group_id, [])
         return [types_cache[tid] for tid in type_ids]
 
     def get_types_by_category(self, category_id: int) -> list[EveType]:
@@ -135,7 +204,9 @@ class SDEProvider:
 
         """
         types_cache = self._load_types()
-        type_ids = self._types_by_category_index.get(category_id, [])
+        # _load_types ensures indices are built
+        index = self._types_by_category_index or {}
+        type_ids = index.get(category_id, [])
         return [types_cache[tid] for tid in type_ids]
 
     def get_types_by_market_group(self, market_group_id: int) -> list[EveType]:
@@ -151,7 +222,9 @@ class SDEProvider:
 
         """
         types_cache = self._load_types()
-        type_ids = self._types_by_market_group_index.get(market_group_id, [])
+        # _load_types ensures indices are built
+        index = self._types_by_market_group_index or {}
+        type_ids = index.get(market_group_id, [])
         return [types_cache[tid] for tid in type_ids]
 
     def get_published_types(self) -> list[EveType]:
@@ -164,7 +237,9 @@ class SDEProvider:
 
         """
         types_cache = self._load_types()
-        return [types_cache[tid] for tid in self._published_types_ids]
+        # _load_types ensures indices are built
+        published_ids = self._published_types_ids or set()
+        return [types_cache[tid] for tid in published_ids]
 
     def get_all_types(self) -> list[EveType]:
         """Get all types.
@@ -206,7 +281,9 @@ class SDEProvider:
 
         """
         groups_cache = self._load_groups()
-        group_ids = self._groups_by_category_index.get(category_id, [])
+        # _load_groups ensures indices are built
+        index = self._groups_by_category_index or {}
+        group_ids = index.get(category_id, [])
         return [groups_cache[gid] for gid in group_ids]
 
     def is_npc_station(self, station_id: int) -> bool:
@@ -313,7 +390,10 @@ class SDEProvider:
         return self._load_solar_system_names()
 
     def clear_cache(self) -> None:
-        """Clear all cached data to free memory."""
+        """Clear all cached data to free memory.
+
+        All caches are set to None for consistency with fresh state.
+        """
         logger.info("Clearing SDE cache...")
 
         # Clear primary caches
@@ -326,16 +406,20 @@ class SDEProvider:
 
         # Clear location name caches
         self._npc_station_names_cache = None
+        self._npc_station_system_ids_cache = None
         self._region_names_cache = None
         self._constellation_names_cache = None
         self._solar_system_names_cache = None
 
-        # Clear index hashmaps (reset to empty, not None)
-        self._types_by_group_index = {}
-        self._types_by_category_index = {}
-        self._types_by_market_group_index = {}
-        self._published_types_ids = set()
-        self._groups_by_category_index = {}
+        # Clear index hashmaps (set to None for consistency)
+        self._types_by_group_index = None
+        self._types_by_category_index = None
+        self._types_by_market_group_index = None
+        self._published_types_ids = None
+        self._groups_by_category_index = None
+
+        # Clear metadata
+        self._sde_metadata = None
 
         logger.info("Cache cleared")
 
@@ -380,8 +464,302 @@ class SDEProvider:
                 if self._blueprint_type_ids_cache
                 else 0
             ),
-            "indices_built": len(self._types_by_group_index) > 0,
+            "indices_built": (
+                self._types_by_group_index is not None
+                and len(self._types_by_group_index) > 0
+            ),
         }
+
+    def get_sde_metadata(self) -> SDEMetadata | None:
+        """Get metadata about the SDE cache.
+
+        Returns:
+            SDEMetadata dictionary or None if not computed yet
+        """
+        return self._sde_metadata
+
+    # ------------------------------------------------------------------
+    # Persistence / background helpers
+    # ------------------------------------------------------------------
+    def wait_until_ready(self, timeout: float | None = None) -> bool:
+        """Block until background build/persisted load completes.
+
+        Returns True if ready before timeout, False otherwise.
+        """
+
+        return self._background_ready.wait(timeout=timeout)
+
+    def _build_and_persist_background(self) -> None:
+        try:
+            self._build_all_indices_sync()
+            self._persist_indices()
+        except Exception:
+            logger.exception("Background SDE build failed")
+        finally:
+            self._background_ready.set()
+
+    def _compute_source_signature(self) -> tuple[float, int] | None:
+        """Compute a simple signature based on SDE jsonl mtimes and count.
+
+        This is the legacy signature format for backwards compatibility.
+        """
+        base = getattr(self._parser, "file_path", None)
+        if not base:
+            return None
+        base_path = Path(base)
+        if not base_path.exists():
+            return None
+
+        mtimes: list[float] = []
+        try:
+            for path in base_path.glob("*.jsonl"):
+                try:
+                    mtimes.append(path.stat().st_mtime)
+                except OSError:
+                    continue
+        except Exception:
+            return None
+
+        if not mtimes:
+            return None
+        return (max(mtimes), len(mtimes))
+
+    def _check_sde_changed(self, old_metadata: SDEMetadata | None) -> bool:
+        """Check if SDE source files have changed since cache was built.
+
+        Uses a simple heuristic: if max mtime of any .jsonl file is newer than
+        the cache computed_at timestamp, rebuild everything. This is simpler and
+        more robust than per-file tracking for a data set that changes rarely.
+
+        Args:
+            old_metadata: Previously stored SDE metadata with computed_at timestamp
+
+        Returns:
+            True if SDE files appear to have changed, False otherwise.
+        """
+        if old_metadata is None:
+            # No previous metadata - rebuild
+            return True
+
+        base = getattr(self._parser, "file_path", None)
+        if not base:
+            return False
+
+        base_path = Path(base)
+        if not base_path.exists():
+            return False
+
+        try:
+            # Parse the cached timestamp
+            cached_time = datetime.fromisoformat(old_metadata["computed_at"])
+
+            # Check if any .jsonl file is newer than cache
+            for path in base_path.glob("*.jsonl"):
+                try:
+                    file_mtime = path.stat().st_mtime
+                    file_time = datetime.fromtimestamp(file_mtime, tz=UTC)
+                    if file_time > cached_time:
+                        logger.debug(
+                            f"SDE file changed: {path.name} mtime {file_time} > cache time {cached_time}"
+                        )
+                        return True
+                except OSError:
+                    continue
+        except Exception:
+            logger.debug(
+                "Error checking SDE changes; assuming no change", exc_info=True
+            )
+            return False
+
+        return False
+
+    def _compute_sde_metadata(self) -> SDEMetadata:
+        """Compute metadata about the current SDE cache state.
+
+        Returns:
+            SDEMetadata with counts and timestamp.
+        """
+        return SDEMetadata(
+            computed_at=datetime.now(UTC).isoformat(),
+            total_types=len(self._types_cache) if self._types_cache else 0,
+            total_groups=len(self._groups_cache) if self._groups_cache else 0,
+            total_categories=(
+                len(self._categories_cache) if self._categories_cache else 0
+            ),
+            total_market_groups=(
+                len(self._market_groups_cache) if self._market_groups_cache else 0
+            ),
+            total_npc_stations=(
+                len(self._npc_stations_cache) if self._npc_stations_cache else 0
+            ),
+            total_blueprint_types=(
+                len(self._blueprint_type_ids_cache)
+                if self._blueprint_type_ids_cache
+                else 0
+            ),
+        )
+
+    def _persist_indices(self) -> None:
+        if not self._types_cache:
+            return
+
+        # Compute metadata (which includes computed_at timestamp)
+        signature = self._compute_source_signature()
+        self._sde_metadata = self._compute_sde_metadata()
+
+        payload = {
+            # Legacy signature for backwards compatibility
+            "signature": signature,
+            # SDE metadata - this includes computed_at for change detection
+            "sde_metadata": self._sde_metadata,
+            # Caches
+            "types_cache": self._types_cache,
+            "categories_cache": self._categories_cache,
+            "groups_cache": self._groups_cache,
+            "market_groups_cache": self._market_groups_cache,
+            "npc_stations_cache": self._npc_stations_cache,
+            "npc_station_names_cache": self._npc_station_names_cache,
+            "npc_station_system_ids_cache": self._npc_station_system_ids_cache,
+            "region_names_cache": self._region_names_cache,
+            "constellation_names_cache": self._constellation_names_cache,
+            "solar_system_names_cache": self._solar_system_names_cache,
+            "types_by_group_index": self._types_by_group_index,
+            "types_by_category_index": self._types_by_category_index,
+            "types_by_market_group_index": self._types_by_market_group_index,
+            "published_types_ids": self._published_types_ids,
+            "groups_by_category_index": self._groups_by_category_index,
+            "blueprint_type_ids_cache": self._blueprint_type_ids_cache,
+        }
+
+        try:
+            tmp_path = self._persist_path.with_suffix(".tmp")
+            with open(tmp_path, "wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_path, self._persist_path)
+            logger.debug("Persisted SDE caches to %s", self._persist_path)
+        except Exception:
+            logger.debug("Failed to persist SDE caches", exc_info=True)
+
+    def _validate_cache_integrity(self, payload: dict) -> bool:
+        """Validate that loaded cache data meets integrity requirements.
+
+        Args:
+            payload: The loaded pickle payload
+
+        Returns:
+            True if all integrity checks pass, False otherwise.
+        """
+        # Check all expected cache keys are present
+        expected_keys = [
+            "types_cache",
+            "categories_cache",
+            "groups_cache",
+            "market_groups_cache",
+            "npc_stations_cache",
+        ]
+
+        for key in expected_keys:
+            if key not in payload or payload[key] is None:
+                logger.debug(f"Cache integrity check failed: missing key '{key}'")
+                return False
+
+        # Check minimum expected sizes for critical caches (warning only)
+        # Small datasets (like test data) are allowed but logged
+        for cache_key, min_size in MIN_EXPECTED_CACHE_SIZES.items():
+            cache = payload.get(cache_key)
+            if cache is not None and len(cache) < min_size:
+                logger.debug(
+                    f"Cache integrity note: '{cache_key}' has {len(cache)} items, "
+                    f"typical SDE has at least {min_size}. This may be test data."
+                )
+                # Don't fail - small datasets are valid (e.g., tests)
+
+        # Validate index consistency with their source caches
+        types_cache = payload.get("types_cache")
+        types_by_group = payload.get("types_by_group_index", {})
+        if types_cache and types_by_group:
+            # Sample check: ensure indexed type IDs exist in types cache
+            for type_ids in list(types_by_group.values())[:10]:
+                for tid in type_ids[:5]:
+                    if tid not in types_cache:
+                        logger.debug(
+                            f"Cache integrity check: type_id {tid} in index but not in cache"
+                        )
+                        return False
+
+        return True
+
+    def _load_persisted_indices(self) -> bool:
+        if not self._persist_path.exists():
+            return False
+        try:
+            with open(self._persist_path, "rb") as f:
+                payload = pickle.load(f)
+
+            # Check if SDE source files have changed since cache was built
+            sde_metadata = payload.get("sde_metadata")
+            if self._check_sde_changed(sde_metadata):
+                logger.info("SDE source files have changed; rebuilding all caches")
+                return False
+
+            # Fall back to legacy signature check if no metadata
+            if sde_metadata is None:
+                signature = payload.get("signature")
+                if signature and signature != self._compute_source_signature():
+                    logger.debug("SDE persist signature mismatch; rebuilding")
+                    return False
+
+            # Validate integrity before loading
+            if not self._validate_cache_integrity(payload):
+                logger.warning("Cache integrity validation failed; rebuilding")
+                return False
+
+            # Load all caches from payload
+            self._types_cache = payload.get("types_cache")
+            self._categories_cache = payload.get("categories_cache")
+            self._groups_cache = payload.get("groups_cache")
+            self._market_groups_cache = payload.get("market_groups_cache")
+            self._npc_stations_cache = payload.get("npc_stations_cache")
+            self._npc_station_names_cache = payload.get("npc_station_names_cache")
+            self._npc_station_system_ids_cache = payload.get(
+                "npc_station_system_ids_cache"
+            )
+            self._region_names_cache = payload.get("region_names_cache")
+            self._constellation_names_cache = payload.get("constellation_names_cache")
+            self._solar_system_names_cache = payload.get("solar_system_names_cache")
+            self._types_by_group_index = payload.get("types_by_group_index")
+            self._types_by_category_index = payload.get("types_by_category_index")
+            self._types_by_market_group_index = payload.get(
+                "types_by_market_group_index"
+            )
+            self._published_types_ids = payload.get("published_types_ids")
+            self._groups_by_category_index = payload.get("groups_by_category_index")
+            self._blueprint_type_ids_cache = payload.get("blueprint_type_ids_cache")
+            self._sde_metadata = sde_metadata
+
+            logger.info(
+                "Loaded SDE caches from persisted file (%s)", self._persist_path
+            )
+            return True
+        except Exception:
+            logger.debug(
+                "Failed to load persisted SDE caches; will rebuild", exc_info=True
+            )
+            return False
+
+    def _build_all_indices_sync(self) -> None:
+        # Force load everything to build indices once
+        self._load_types()
+        self._load_categories()
+        self._load_groups()
+        self._load_market_groups()
+        self._load_npc_stations()
+        self._load_npc_station_names()
+        self._load_npc_station_system_ids()
+        self._load_region_names()
+        self._load_constellation_names()
+        self._load_solar_system_names()
+        self._load_blueprint_type_ids()
 
     def _load_blueprint_type_ids(self) -> set[int]:
         """Load and cache blueprint type IDs.
