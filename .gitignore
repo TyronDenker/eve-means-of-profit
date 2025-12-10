@@ -17,3 +17,4 @@ htmlcov/
 /data/
 .env*
 *.log
+.github
