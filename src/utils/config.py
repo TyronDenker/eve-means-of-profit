@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+import threading
 import tomllib
 from datetime import UTC, datetime
 from logging import getLogger
@@ -592,17 +593,42 @@ class Config:
 
 # Global configuration instance (singleton)
 _config_instance: Config | None = None
+_config_lock: threading.Lock | None = None
 
 
-def get_config() -> Config:
+def _get_config_lock() -> threading.Lock:
+    """Get the config lock, creating it lazily."""
+    global _config_lock  # noqa: PLW0603
+    if _config_lock is None:
+        _config_lock = threading.Lock()
+    return _config_lock
+
+
+def get_config(config: Config | None = None) -> Config:
     """Get the global configuration instance (lazy initialization).
+
+    Args:
+        config: Optional config instance to use instead of singleton.
+                If provided on first call, sets the singleton.
+                Useful for dependency injection.
 
     Returns:
         Global Config instance
     """
     global _config_instance  # noqa: PLW0603
+
+    if config is not None:
+        with _get_config_lock():
+            _config_instance = config
+        return _config_instance
+
     if _config_instance is None:
-        _config_instance = Config()
+        with _get_config_lock():
+            if _config_instance is None:
+                _config_instance = Config()
+
+    # Type checker needs assurance - will always be set at this point
+    assert _config_instance is not None
     return _config_instance
 
 
@@ -614,8 +640,19 @@ def reload_config() -> Config:
         Reloaded Config instance
     """
     global _config_instance  # noqa: PLW0603
-    _config_instance = Config()
+    with _get_config_lock():
+        _config_instance = Config()
     return _config_instance
+
+
+def reset_config() -> None:
+    """Reset the global config instance.
+
+    Primarily for testing.
+    """
+    global _config_instance  # noqa: PLW0603
+    with _get_config_lock():
+        _config_instance = None
 
 
 # Create the global config instance for convenience
