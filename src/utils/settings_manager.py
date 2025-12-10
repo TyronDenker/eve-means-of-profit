@@ -8,7 +8,7 @@ Features:
 - Type-safe Pydantic models
 - Per-tab UI settings
 - Character manager preferences
-- Custom locations and prices
+- Custom prices
 - Automatic defaults on first run
 
 Usage:
@@ -21,9 +21,6 @@ Usage:
 
     # Update character order
     settings.set_character_order([123, 456, 789])
-
-    # Get custom location name
-    name = settings.get_custom_location(1000001)
 
     # Get custom price
     price = settings.get_custom_sell_price(34)
@@ -63,9 +60,9 @@ class UISettings(BaseModel):
         default_factory=list,
         description="Visual order of columns (left to right)",
     )
-    col_widths: list[int] = Field(
-        default_factory=list,
-        description="Width in pixels for each column (parallel to column_order)",
+    col_widths: dict[str, int] = Field(
+        default_factory=dict,
+        description="Width in pixels for each column keyed by column id/name",
     )
     movable: bool = Field(
         default=True,
@@ -106,6 +103,31 @@ class CharacterManagerSettings(BaseModel):
         default="card",
         description="View mode: 'card', 'list', or 'compact'",
     )
+    # Font and UI sizing preferences
+    character_name_font_size: int = Field(
+        default=14,
+        description="Font size for character names (px)",
+    )
+    corp_alliance_font_size: int = Field(
+        default=11,
+        description="Font size for corporation and alliance names (px)",
+    )
+    networth_font_size: int = Field(
+        default=11,
+        description="Font size for networth data (px)",
+    )
+    portrait_size: int = Field(
+        default=1024,
+        description="Character portrait size in pixels (64, 96, 128, 192, 256)",
+    )
+    sidebar_visible: bool = Field(
+        default=True,
+        description="Whether the endpoint timer sidebar is visible",
+    )
+    show_refresh_on_hover: bool = Field(
+        default=True,
+        description="When true, hovering over a character portrait shows a refresh button",
+    )
 
 
 class UserSettings(BaseModel):
@@ -123,9 +145,15 @@ class UserSettings(BaseModel):
         default_factory=dict,
         description="Custom prices for items (key = type_id, value = {buy, sell})",
     )
-    custom_locations: dict[str, str] = Field(
+
+    # Account management: allows mapping characters to accounts and storing
+    # account-wide PLEX vault amounts (in units of PLEX, not ISK).
+    accounts: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
-        description="Custom user-defined names for locations (key = location_id, value = custom_name)",
+        description=(
+            "Accounts data keyed by account_id: {name: str, plex_units: int, "
+            "characters: [int, ...]}"
+        ),
     )
 
 
@@ -156,8 +184,14 @@ class SettingsManager:
             return
 
         self._settings_path = get_config().app.user_settings_file
+        # External persistence files for custom data (new separated storage)
+        # These allow independent versioning and prevent large rewrites of the
+        # main settings file when frequently adjusting prices or names.
+        self._custom_prices_path = self._settings_path.parent / "custom_prices.json"
         self._write_lock = threading.Lock()
         self._settings = self._load()
+        # Load / migrate external custom data stores
+        self._load_external_custom_data()
         self._initialized = True
 
     def _load(self) -> UserSettings:
@@ -201,15 +235,19 @@ class SettingsManager:
             },
             character_manager=CharacterManagerSettings(),
             custom_prices={},
+            # New: accounts default empty
+            accounts={},
         )
         # Save defaults immediately
         self._save(defaults)
         return defaults
 
     def _save(self, settings: UserSettings | None = None) -> None:
-        """Atomically save settings to JSON file.
+        """Atomically save settings to JSON with Windows-safe replace and retry.
 
-        Uses a temporary file and rename to ensure atomic writes.
+        Writes to a unique temp file in the same directory, fsyncs, then replaces
+        the target with os.replace (atomic on Windows) with limited retries to avoid
+        PermissionError when other processes momentarily lock the file.
 
         Args:
             settings: Settings to save. If None, saves current settings.
@@ -218,33 +256,128 @@ class SettingsManager:
             settings = self._settings
 
         with self._write_lock:
+            # Ensure parent directory exists
+            self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Prepare pruned payload (exclude external custom stores)
+            pruned = settings.model_dump(mode="json")
+            pruned["custom_prices"] = {}
+
+            # Unique temp filename to avoid collisions
+            import contextlib
+            import os
+            import time
+
+            temp_name = f"{self._settings_path.name}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
+            temp_path = self._settings_path.parent / temp_name
+
             try:
-                # Ensure parent directory exists
-                self._settings_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Write to temporary file first
-                temp_path = self._settings_path.with_suffix(".tmp")
                 with open(temp_path, "w", encoding="utf-8") as f:
-                    json.dump(
-                        settings.model_dump(mode="json"),
-                        f,
-                        indent=2,
-                        ensure_ascii=False,
-                    )
-
-                # Atomic rename
-                temp_path.replace(self._settings_path)
-                logger.debug(f"Settings saved to {self._settings_path}")
-
+                    json.dump(pruned, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
             except Exception as e:
-                logger.error(f"Failed to save settings to {self._settings_path}: {e}")
+                logger.error(
+                    "Failed to write temporary settings file %s: %s", temp_path, e
+                )
+                with contextlib.suppress(Exception):
+                    if temp_path.exists():
+                        temp_path.unlink()
                 raise
+
+            # Attempt atomic replace with retries
+            max_attempts = 5
+            delay = 0.1
+            last_err: Exception | None = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    os.replace(temp_path, self._settings_path)
+                    logger.debug("Settings saved to %s", self._settings_path)
+                    last_err = None
+                    break
+                except PermissionError as e:
+                    last_err = e
+                    logger.warning(
+                        "PermissionError replacing settings (attempt %d/%d): %s",
+                        attempt,
+                        max_attempts,
+                        e,
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * 2, 1.0)
+                except Exception as e:
+                    last_err = e
+                    logger.error("Unexpected error replacing settings: %s", e)
+                    break
+
+            # Cleanup temp file if still present
+            with contextlib.suppress(Exception):
+                if temp_path.exists():
+                    temp_path.unlink()
+
+            if last_err is not None:
+                raise last_err
 
     def reload(self) -> None:
         """Reload settings from disk, discarding any unsaved changes."""
         with self._write_lock:
             self._settings = self._load()
+            # Refresh external stores (do not overwrite current in-memory values)
+            self._load_external_custom_data()
             logger.debug("Settings reloaded from disk")
+
+    # -------------------------------------------------------------------------
+    # External Stores (Custom Prices / Locations)
+    # -------------------------------------------------------------------------
+
+    def _load_external_custom_data(self) -> None:
+        """Load or migrate custom price and location data into memory.
+
+        Migration logic:
+        - If external files exist, load them and replace in-memory maps.
+        - If they do NOT exist but legacy data is present in user_settings.json,
+          write out the new external files and clear legacy fields from the
+          primary settings file for future runs.
+        """
+        migrated = False
+
+        # Load custom prices external file if present
+        if self._custom_prices_path.exists():
+            try:
+                with open(self._custom_prices_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    # Expect root to be mapping type_id -> {buy, sell}
+                    self._settings.custom_prices = {
+                        str(k): v for k, v in data.items() if isinstance(v, dict)
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to load custom prices file: {e}")
+        elif self._settings.custom_prices:
+            # Legacy inline data – migrate
+            self._persist_custom_prices()
+            migrated = True
+
+        # If migration occurred, prune legacy fields from settings file
+        if migrated:
+            try:
+                self._save(self._settings)
+                logger.info(
+                    "Migrated legacy custom price/location data to external JSON files"
+                )
+            except Exception:
+                logger.exception("Failed to prune legacy custom data after migration")
+
+    def _persist_custom_prices(self) -> None:
+        """Persist current in-memory custom prices to external file."""
+        try:
+            self._custom_prices_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._custom_prices_path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._settings.custom_prices, f, indent=2, ensure_ascii=False)
+            tmp.replace(self._custom_prices_path)
+        except Exception as e:
+            logger.error(f"Failed to persist custom prices: {e}")
 
     # -------------------------------------------------------------------------
     # UI Settings
@@ -344,6 +477,67 @@ class SettingsManager:
         self._settings.character_manager.view_mode = mode
         self._save()
 
+    def get_character_name_font_size(self) -> int:
+        """Get the character name font size."""
+        return self._settings.character_manager.character_name_font_size
+
+    def set_character_name_font_size(self, size: int) -> None:
+        """Set the character name font size."""
+        self._settings.character_manager.character_name_font_size = max(
+            8, min(24, size)
+        )
+        self._save()
+
+    def get_corp_alliance_font_size(self) -> int:
+        """Get the corporation/alliance font size."""
+        return self._settings.character_manager.corp_alliance_font_size
+
+    def set_corp_alliance_font_size(self, size: int) -> None:
+        """Set the corporation/alliance font size."""
+        self._settings.character_manager.corp_alliance_font_size = max(8, min(18, size))
+        self._save()
+
+    def get_networth_font_size(self) -> int:
+        """Get the networth data font size."""
+        return self._settings.character_manager.networth_font_size
+
+    def set_networth_font_size(self, size: int) -> None:
+        """Set the networth data font size."""
+        self._settings.character_manager.networth_font_size = max(8, min(16, size))
+        self._save()
+
+    def get_portrait_size(self) -> int:
+        """Get the character portrait size."""
+        return self._settings.character_manager.portrait_size
+
+    def set_portrait_size(self, size: int) -> None:
+        """Set the character portrait size."""
+        # Allow only specific portrait sizes
+        valid_sizes = [64, 96, 128, 192, 256]
+        if size not in valid_sizes:
+            # Find closest valid size
+            size = min(valid_sizes, key=lambda x: abs(x - size))
+        self._settings.character_manager.portrait_size = size
+        self._save()
+
+    def get_sidebar_visible(self) -> bool:
+        """Get whether the endpoint timer sidebar is visible."""
+        return self._settings.character_manager.sidebar_visible
+
+    def set_sidebar_visible(self, visible: bool) -> None:
+        """Set whether the endpoint timer sidebar is visible."""
+        self._settings.character_manager.sidebar_visible = visible
+        self._save()
+
+    def get_show_refresh_on_hover(self) -> bool:
+        """Get whether hovering over a portrait shows a refresh button."""
+        return self._settings.character_manager.show_refresh_on_hover
+
+    def set_show_refresh_on_hover(self, visible: bool) -> None:
+        """Set whether hovering over a portrait shows a refresh button."""
+        self._settings.character_manager.show_refresh_on_hover = bool(visible)
+        self._save()
+
     # -------------------------------------------------------------------------
     # Custom Prices (supports buy and sell prices)
     # -------------------------------------------------------------------------
@@ -406,7 +600,8 @@ class SettingsManager:
             existing["sell"] = float(sell)
 
         self._settings.custom_prices[key] = existing
-        self._save()
+        # Persist ONLY the external store (avoid rewriting whole settings file)
+        self._persist_custom_prices()
 
     def remove_custom_price(self, type_id: int) -> None:
         """Remove custom price for an item type.
@@ -417,7 +612,7 @@ class SettingsManager:
         key = str(type_id)
         if key in self._settings.custom_prices:
             del self._settings.custom_prices[key]
-            self._save()
+            self._persist_custom_prices()
 
     def get_all_custom_prices(self) -> dict[int, dict[str, float | None]]:
         """Get all custom item prices.
@@ -426,55 +621,6 @@ class SettingsManager:
             Dictionary mapping type IDs to price dictionaries {buy, sell}
         """
         return {int(k): v for k, v in self._settings.custom_prices.items()}
-
-    # -------------------------------------------------------------------------
-    # Custom Location Names
-    # -------------------------------------------------------------------------
-
-    def get_custom_location(self, location_id: int) -> str | None:
-        """Get custom user-defined name for a location.
-
-        Args:
-            location_id: Location ID to look up
-
-        Returns:
-            Custom name or None if not set
-        """
-        return self._settings.custom_locations.get(str(location_id))
-
-    def set_custom_location(self, location_id: int, custom_name: str | None) -> None:
-        """Set custom user-defined name for a location.
-
-        Args:
-            location_id: Location ID
-            custom_name: Custom name to set, or None to remove
-        """
-        key = str(location_id)
-        if custom_name is None:
-            if key in self._settings.custom_locations:
-                del self._settings.custom_locations[key]
-        else:
-            self._settings.custom_locations[key] = custom_name
-        self._save()
-
-    def remove_custom_location(self, location_id: int) -> None:
-        """Remove custom name for a location.
-
-        Args:
-            location_id: Location ID to remove custom name for
-        """
-        key = str(location_id)
-        if key in self._settings.custom_locations:
-            del self._settings.custom_locations[key]
-            self._save()
-
-    def get_all_custom_locations(self) -> dict[int, str]:
-        """Get all custom location names.
-
-        Returns:
-            Dictionary mapping location IDs to custom names
-        """
-        return {int(k): v for k, v in self._settings.custom_locations.items()}
 
     # -------------------------------------------------------------------------
     # Utility Methods
@@ -507,19 +653,175 @@ class SettingsManager:
         self._save()
         logger.info(f"Settings imported from {path}")
 
+    # -------------------------------------------------------------------------
+    # Accounts & PLEX vault management
+    # -------------------------------------------------------------------------
+
+    def get_accounts(self) -> dict[int, dict[str, Any]]:
+        """Return all accounts with their metadata.
+
+        Returns:
+            Mapping of account_id -> {name, plex_units, characters}
+        """
+        out: dict[int, dict[str, Any]] = {}
+        for k, v in self._settings.accounts.items():
+            try:
+                out[int(k)] = {
+                    "name": str(v.get("name") or ""),
+                    "plex_units": int(v.get("plex_units") or 0),
+                    "characters": [int(x) for x in v.get("characters", [])],
+                }
+            except Exception:
+                continue
+        return out
+
+    def set_account(self, account_id: int, name: str | None = None) -> None:
+        """Create or update an account name.
+
+        Args:
+            account_id: Numeric account identifier (user-defined)
+            name: Optional display name
+        """
+        key = str(account_id)
+        acc = self._settings.accounts.get(
+            key, {"name": "", "plex_units": 0, "characters": []}
+        )
+        if name is not None:
+            acc["name"] = str(name)
+        self._settings.accounts[key] = acc
+        self._save()
+
+    def set_account_plex_units(self, account_id: int, units: int) -> None:
+        """Set PLEX vault amount (in units) for an account."""
+        key = str(account_id)
+        acc = self._settings.accounts.get(
+            key, {"name": "", "plex_units": 0, "characters": []}
+        )
+        acc["plex_units"] = max(0, int(units))
+        self._settings.accounts[key] = acc
+        self._save()
+
+    def get_account_plex_units(self, account_id: int) -> int:
+        """Get PLEX units stored for an account."""
+        acc = self._settings.accounts.get(str(account_id))
+        if not acc:
+            return 0
+        try:
+            return int(acc.get("plex_units") or 0)
+        except Exception:
+            return 0
+
+    def set_account_plex_update_time(self, account_id: int, timestamp: str) -> None:
+        """Set the timestamp when PLEX vault was last manually updated (ISO format)."""
+        key = str(account_id)
+        acc = self._settings.accounts.get(
+            key, {"name": "", "plex_units": 0, "characters": []}
+        )
+        acc["plex_update_time"] = timestamp
+        self._settings.accounts[key] = acc
+        self._save()
+
+    def get_account_plex_update_time(self, account_id: int) -> str | None:
+        """Get the timestamp when PLEX vault was last manually updated (ISO format)."""
+        acc = self._settings.accounts.get(str(account_id))
+        if not acc:
+            return None
+        return acc.get("plex_update_time")
+
+    def assign_character_to_account(self, character_id: int, account_id: int) -> bool:
+        """Assign a character to an account, enforcing max 3 characters per account.
+
+        Returns True if assignment succeeded, False if limit exceeded.
+        """
+        key = str(account_id)
+        acc = self._settings.accounts.get(
+            key, {"name": "", "plex_units": 0, "characters": []}
+        )
+        chars = [int(x) for x in acc.get("characters", [])]
+        if character_id in chars:
+            # Already assigned
+            return True
+        if len(chars) >= 3:
+            return False
+        chars.append(int(character_id))
+        acc["characters"] = chars
+        self._settings.accounts[key] = acc
+        self._save()
+        return True
+
+    def unassign_character_from_account(
+        self, character_id: int, account_id: int
+    ) -> None:
+        """Remove a character from an account."""
+        key = str(account_id)
+        acc = self._settings.accounts.get(key)
+        if not acc:
+            return
+        acc["characters"] = [
+            int(x) for x in acc.get("characters", []) if int(x) != int(character_id)
+        ]
+        self._settings.accounts[key] = acc
+        self._save()
+
+    def delete_account(self, account_id: int) -> None:
+        """Delete an account entirely.
+
+        Note: Characters should be unassigned before calling this.
+        """
+        key = str(account_id)
+        if key in self._settings.accounts:
+            del self._settings.accounts[key]
+            self._save()
+
+    def get_account_for_character(self, character_id: int) -> int | None:
+        """Return the account_id this character is assigned to, if any."""
+        for k, v in self._settings.accounts.items():
+            chars = [int(x) for x in v.get("characters", [])]
+            if int(character_id) in chars:
+                try:
+                    return int(k)
+                except Exception:
+                    return None
+        return None
+
+    def get_primary_character_for_account(self, account_id: int) -> int | None:
+        """Return a deterministic 'primary' character for an account.
+
+        Uses the first in list; falls back to smallest ID.
+        """
+        acc = self._settings.accounts.get(str(account_id))
+        if not acc:
+            return None
+        chars = [int(x) for x in acc.get("characters", [])]
+        if not chars:
+            return None
+        return chars[0]
+
 
 # Global singleton accessor
 _manager_instance: SettingsManager | None = None
 _manager_lock = threading.Lock()
 
 
-def get_settings_manager() -> SettingsManager:
+def get_settings_manager(
+    settings_manager: SettingsManager | None = None,
+) -> SettingsManager:
     """Get the global settings manager instance.
+
+    Args:
+        settings_manager: Optional settings manager to use instead of singleton.
+                          If provided on first call, sets the singleton.
+                          Useful for dependency injection.
 
     Returns:
         Global SettingsManager singleton
     """
     global _manager_instance  # noqa: PLW0603
+
+    if settings_manager is not None:
+        with _manager_lock:
+            _manager_instance = settings_manager
+        return _manager_instance
 
     if _manager_instance is None:
         with _manager_lock:
