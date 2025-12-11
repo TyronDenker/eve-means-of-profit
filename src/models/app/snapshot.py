@@ -10,6 +10,13 @@ class NetWorthSnapshot(BaseModel):
 
     snapshot_id: int = Field(..., description="Unique snapshot identifier")
     character_id: int = Field(..., description="Character who owns these assets")
+    account_id: int | None = Field(
+        None, description="Owning account for this character (if assigned)"
+    )
+    snapshot_group_id: int | None = Field(
+        None,
+        description="Group identifier to associate simultaneous snapshots across characters",
+    )
     snapshot_time: datetime = Field(..., description="When the snapshot was taken")
 
     total_asset_value: float = Field(..., ge=0, description="Total value of all items")
