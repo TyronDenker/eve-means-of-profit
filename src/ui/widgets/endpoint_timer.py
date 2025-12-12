@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSlot
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
+
+from ui.styles import COLORS
 
 
 class EndpointTimer(QWidget):
@@ -26,26 +28,42 @@ class EndpointTimer(QWidget):
             Optional parent widget.
     """
 
-    def __init__(self, endpoint_name: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, endpoint_name: str, parent: QWidget | None = None, compact: bool = False
+    ) -> None:
         super().__init__(parent)
         self.endpoint_name = endpoint_name
         self._expires_at: datetime | None = None
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        # Don't allow extra margins to force unwanted expansion in compact mode
+        layout.setContentsMargins(
+            2 if compact else 4,
+            2 if compact else 4,
+            2 if compact else 4,
+            2 if compact else 4,
+        )
 
-        # Endpoint name label
+        # Endpoint name label (only show in non-compact mode)
         self.name_label = QLabel(f"{endpoint_name}:")
-        self.name_label.setMinimumWidth(100)
-        layout.addWidget(self.name_label)
+        if compact:
+            self.name_label.setVisible(False)
+            self.name_label.setMinimumWidth(0)
+            self.name_label.setMaximumWidth(0)
+        else:
+            self.name_label.setMinimumWidth(100)
+            layout.addWidget(self.name_label)
 
         # Timer label
-        self.timer_label = QLabel("--:--:--")
-        self.timer_label.setMinimumWidth(80)
+        self.timer_label = QLabel("✓")
+        # Small minimum width in compact mode to avoid expanding parent
+        self.timer_label.setMinimumWidth(32 if compact else 80)
+        self.timer_label.setMaximumWidth(56 if compact else 100)
         self.timer_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.timer_label)
 
-        layout.addStretch()
+        if not compact:
+            layout.addStretch()
 
         # Update timer every second
         self._update_timer = QTimer(self)
@@ -74,20 +92,34 @@ class EndpointTimer(QWidget):
     def _update_display(self) -> None:
         """Update the timer display label and color."""
         if self._expires_at is None:
-            self.timer_label.setText("Ready")
-            self.timer_label.setStyleSheet("color: green;")
+            self.timer_label.setText("✓")
+            self.timer_label.setStyleSheet(
+                f"color: {COLORS.SUCCESS}; font-weight: bold;"
+            )
             return
 
         now = datetime.now(UTC)
         if now >= self._expires_at:
-            self.timer_label.setText("Ready")
-            self.timer_label.setStyleSheet("color: green;")
+            self.timer_label.setText("✓")
+            self.timer_label.setStyleSheet(
+                f"color: {COLORS.SUCCESS}; font-weight: bold;"
+            )
             self._expires_at = None
             return
 
         remaining = self._expires_at - now
         total_seconds = int(remaining.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
+        days, remainder = divmod(total_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
         minutes, seconds = divmod(remainder, 60)
-        self.timer_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-        self.timer_label.setStyleSheet("color: orange;")
+
+        # Use compact format: show only most significant unit
+        if days > 0:
+            self.timer_label.setText(f"{days}d")
+        elif hours > 0:
+            self.timer_label.setText(f"{hours}h")
+        elif minutes > 0:
+            self.timer_label.setText(f"{minutes}m")
+        else:
+            self.timer_label.setText(f"{seconds}s")
+        self.timer_label.setStyleSheet(f"color: {COLORS.WARNING};")
