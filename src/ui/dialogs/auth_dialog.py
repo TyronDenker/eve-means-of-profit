@@ -17,8 +17,9 @@ from PyQt6.QtWidgets import (
 from qasync import asyncSlot
 
 from services.character_service import CharacterService
-from src.utils import global_config
 from ui.signal_bus import get_signal_bus
+from ui.styles import AppStyles
+from utils import global_config
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,13 @@ class AuthDialog(QDialog):
 
         # Scopes section
         scopes_group = QGroupBox("ESI Scopes")
+        scopes_group.setStyleSheet(AppStyles.GROUP_BOX)
         scopes_layout = QVBoxLayout(scopes_group)
 
         # Create scroll area for scopes
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(AppStyles.SCROLL_AREA + AppStyles.SCROLLBAR)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
 
@@ -74,6 +77,7 @@ class AuthDialog(QDialog):
         for scope, description in available_scopes.items():
             checkbox = QCheckBox(f"{scope}\n{description}")
             checkbox.setChecked(scope in default_scopes)
+            checkbox.setStyleSheet(AppStyles.CHECKBOX)
             self._checkboxes[scope] = checkbox
             scroll_layout.addWidget(checkbox)
 
@@ -87,6 +91,7 @@ class AuthDialog(QDialog):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setRange(0, 0)  # Indeterminate
+        self.progress_bar.setStyleSheet(AppStyles.PROGRESS_BAR)
         layout.addWidget(self.progress_bar)
 
         # Status label
@@ -99,10 +104,12 @@ class AuthDialog(QDialog):
         button_layout = QVBoxLayout()
 
         self.auth_button = QPushButton("Start Authentication")
+        self.auth_button.setStyleSheet(AppStyles.BUTTON_PRIMARY)
         self.auth_button.clicked.connect(self._on_auth_clicked)
         button_layout.addWidget(self.auth_button)
 
         self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setStyleSheet(AppStyles.BUTTON_SECONDARY)
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_button)
 
