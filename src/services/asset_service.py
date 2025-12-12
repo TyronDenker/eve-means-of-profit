@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from data import SDEProvider
+    from data.clients import ESIClient
     from data.repositories import Repository
     from services.location_service import LocationService
 
-
+from data.repositories import assets as asset_repo
 from models.app import EnrichedAsset
 from models.eve import EveAsset
 
@@ -29,6 +30,7 @@ class AssetService:
         sde_provider: SDEProvider,
         location_service: LocationService,
         repository: Repository,
+        esi_client: ESIClient | None = None,
     ):
         """Initialize asset service.
 
@@ -40,25 +42,33 @@ class AssetService:
         self._sde = sde_provider
         self._location_service = location_service
         self._repo = repository
+        self._esi = esi_client
 
     async def get_all_enriched_assets(
         self,
         character_id: int,
         character_name: str,
-        assets: list[EveAsset],
         resolve_locations: bool = True,
+        refresh_locations: bool = True,
     ) -> list[EnrichedAsset]:
-        """Get enriched assets for a character.
+        """Get enriched assets for a character from the repository.
+
+        Services must not read directly from clients or frontend cache.
+        This method reads current assets from the repository's
+        current_assets table, then enriches them.
 
         Args:
             character_id: Character ID
             character_name: Character name for display
-            assets: Raw assets to enrich
             resolve_locations: Whether to resolve location names
+            refresh_locations: Whether to refresh stale location cache entries.
+                Set to False for fast startup (use cached names only).
 
         Returns:
             List of enriched assets with SDE data and location info
         """
+        # Fetch current assets from repository
+        assets = await asset_repo.get_current_assets(self._repo, character_id)
         # Index assets by item_id for parent traversal
         by_item_id: dict[int, EveAsset] = {a.item_id: a for a in assets}
 
@@ -77,7 +87,7 @@ class AssetService:
             locations = await self._location_service.resolve_locations_bulk(
                 list(root_ids),
                 character_id=character_id,
-                refresh_stale=True,
+                refresh_stale=refresh_locations,
             )
 
         # Create enriched assets
@@ -92,6 +102,61 @@ class AssetService:
             enriched_assets.append(enriched)
 
         return enriched_assets
+
+    async def sync_assets(
+        self,
+        character_id: int,
+        use_cache: bool = True,
+        bypass_cache: bool = False,
+    ) -> int:
+        """Refresh assets from ESI and update repository current_assets.
+
+        Services should request data updates via clients, then store in the
+        repository. Subsequent reads must come from the repository.
+
+        Args:
+            character_id: Character ID to refresh
+            use_cache: Whether to allow ETag/HTTP cache
+            bypass_cache: Force fresh network fetch
+
+        Returns:
+            Number of assets stored in current_assets
+        """
+        if self._esi is None:
+            raise RuntimeError("ESI client not configured in AssetService")
+
+        try:
+            result = await self._esi.assets.get_assets(
+                character_id,
+                use_cache=use_cache,
+                bypass_cache=bypass_cache,
+            )
+            assets, headers = result if isinstance(result, tuple) else (result, {})
+        except Exception:
+            logger.exception("Failed to fetch assets from ESI for %s", character_id)
+            raise
+
+        # Always persist a snapshot to keep current_assets and history in sync
+        try:
+            snapshot_id = await asset_repo.save_snapshot(
+                self._repo,
+                character_id,
+                assets,
+                notes=f"ESI refresh (etag={headers.get('etag')})",
+            )
+            logger.info(
+                "Saved asset snapshot %s and updated current_assets for character %d with %d items",
+                snapshot_id,
+                character_id,
+                len(assets),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to snapshot assets; falling back to current update"
+            )
+            await asset_repo.update_current_assets(self._repo, character_id, assets)
+            await self._repo.commit()
+        return len(assets)
 
     def _enrich_asset(
         self, asset: EveAsset, character_id: int, character_name: str = ""
@@ -160,12 +225,27 @@ class AssetService:
         # Apply location name based on category
         if loc_info.category == "station":
             asset.station_name = loc_info.name
+            # Stations have system info - resolve it
+            if loc_info.solar_system_id:
+                asset.system_id = loc_info.solar_system_id
+                system_name = self._sde.get_solar_system_name(loc_info.solar_system_id)
+                if system_name:
+                    asset.system_name = system_name
         elif loc_info.category == "solar_system":
             asset.system_id = loc_info.location_id
             asset.system_name = loc_info.name
+        elif loc_info.category == "planet":
+            asset.planet_id = loc_info.location_id
+            asset.planet_name = loc_info.name
         elif loc_info.category == "structure":
             asset.structure_id = loc_info.location_id
             asset.structure_name = loc_info.custom_name or loc_info.name
+            # Structures have system info - resolve it
+            if loc_info.solar_system_id:
+                asset.system_id = loc_info.solar_system_id
+                system_name = self._sde.get_solar_system_name(loc_info.solar_system_id)
+                if system_name:
+                    asset.system_name = system_name
         elif loc_info.category == "region":
             asset.region_id = loc_info.location_id
             asset.region_name = loc_info.name
