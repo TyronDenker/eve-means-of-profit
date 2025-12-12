@@ -1,11 +1,11 @@
 """Character service for business logic."""
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from data.clients import ESIClient
 from models.app.character_info import CharacterInfo
-from src.utils import global_config
 
 logger = logging.getLogger(__name__)
 
@@ -13,17 +13,32 @@ logger = logging.getLogger(__name__)
 class CharacterService:
     """Service for character-related operations."""
 
-    def __init__(self, esi_client: ESIClient | None = None):
+    # Cache TTL: 1 hour - only refresh on explicit request or stale
+    CACHE_TTL = timedelta(hours=1)
+
+    def __init__(self, esi_client: ESIClient):
         """Initialize character service.
 
         Args:
-            esi_client: ESI client instance (creates new one if None)
+            esi_client: ESI client instance (required via DI)
         """
-        self._client = esi_client or ESIClient(client_id=global_config.esi.client_id)
+        self._client = esi_client
         self._image_cache: dict[str, bytes] = {}
+        # Character info cache: character_id -> (CharacterInfo, last_updated)
+        self._character_cache: dict[int, tuple[CharacterInfo, datetime]] = {}
 
-    async def get_authenticated_characters(self) -> list[CharacterInfo]:
+    async def get_authenticated_characters(
+        self, force_refresh: bool = False, use_cache_only: bool = False
+    ) -> list[CharacterInfo]:
         """Get all authenticated characters with full info.
+
+        Uses cached data if available and not stale. Only makes API calls
+        when necessary (first load, stale data, or forced refresh).
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh data
+            use_cache_only: If True, only return cached data without network calls.
+                           Used for fast startup to show data immediately.
 
         Returns:
             List of CharacterInfo with corp/alliance details
@@ -33,16 +48,47 @@ class CharacterService:
 
         characters = self._client.auth.list_authenticated_characters()
         character_infos = []
+        now = datetime.now(UTC)
 
         for char in characters:
-            try:
-                # Get public info for corp/alliance
-                public_info = await self._get_character_public_info(
-                    char["character_id"]
+            char_id = char["character_id"]
+
+            # Check cache first (unless force_refresh)
+            if not force_refresh and char_id in self._character_cache:
+                cached_info, cached_time = self._character_cache[char_id]
+                # Use cache if not stale OR if use_cache_only is True
+                if use_cache_only or now - cached_time < self.CACHE_TTL:
+                    logger.debug(
+                        "Using cached info for character %d (age: %.1f seconds)",
+                        char_id,
+                        (now - cached_time).total_seconds(),
+                    )
+                    character_infos.append(cached_info)
+                    continue
+
+            # If use_cache_only, return minimal info without network call
+            if use_cache_only:
+                logger.debug(
+                    "Cache-only mode: returning minimal info for character %d",
+                    char_id,
                 )
+                character_infos.append(
+                    CharacterInfo(
+                        character_id=char_id,
+                        character_name=char["character_name"],
+                        scopes=char.get("scopes", []),
+                    )
+                )
+                continue
+
+            # Cache miss or stale - fetch from API
+            try:
+                logger.debug("Fetching fresh info for character %d", char_id)
+                # Get public info for corp/alliance
+                public_info = await self._get_character_public_info(char_id)
 
                 char_info = CharacterInfo(
-                    character_id=char["character_id"],
+                    character_id=char_id,
                     character_name=char["character_name"],
                     corporation_id=public_info.get("corporation_id"),
                     corporation_name=public_info.get("corporation_name"),
@@ -50,21 +96,45 @@ class CharacterService:
                     alliance_name=public_info.get("alliance_name"),
                     scopes=char.get("scopes", []),
                 )
+
+                # Update cache
+                self._character_cache[char_id] = (char_info, now)
                 character_infos.append(char_info)
+
             except Exception:
-                logger.exception(
-                    "Failed to get info for character %s", char["character_id"]
-                )
-                # Add minimal info
-                character_infos.append(
-                    CharacterInfo(
-                        character_id=char["character_id"],
-                        character_name=char["character_name"],
-                        scopes=char.get("scopes", []),
+                logger.exception("Failed to get info for character %s", char_id)
+                # Check if we have stale cached data we can use
+                if char_id in self._character_cache:
+                    cached_info, _ = self._character_cache[char_id]
+                    logger.info(
+                        "Using stale cached info for character %d due to fetch error",
+                        char_id,
                     )
-                )
+                    character_infos.append(cached_info)
+                else:
+                    # Add minimal info as fallback
+                    character_infos.append(
+                        CharacterInfo(
+                            character_id=char_id,
+                            character_name=char["character_name"],
+                            scopes=char.get("scopes", []),
+                        )
+                    )
 
         return character_infos
+
+    def invalidate_character_cache(self, character_id: int | None = None) -> None:
+        """Invalidate character info cache.
+
+        Args:
+            character_id: Specific character to invalidate, or None to clear all
+        """
+        if character_id is None:
+            self._character_cache.clear()
+            logger.info("Cleared all character info cache")
+        elif character_id in self._character_cache:
+            del self._character_cache[character_id]
+            logger.info("Invalidated cache for character %d", character_id)
 
     async def authenticate_character(self, scopes: list[str]) -> CharacterInfo:
         """Authenticate a new character.
