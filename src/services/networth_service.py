@@ -20,15 +20,20 @@ from data.repositories import (
     networth,
     prices,
 )
+from data.repositories.schemas import CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE
 from models.app import (
+    AssetLocationOption,
     FuzzworkMarketDataPoint,
     FuzzworkMarketStats,
     FuzzworkRegionMarketData,
+    LocationInfo,
     NetWorthSnapshot,
 )
+from models.eve.asset import EveAsset
 
 if TYPE_CHECKING:
     from data.clients import ESIClient
+    from services.location_service import LocationService
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +55,50 @@ class NetWorthService:
         repository: Repository,
         fuzzwork_provider: FuzzworkProvider | None = None,
         settings_manager: Any | None = None,
+        sde_provider: Any | None = None,
+        location_service: LocationService | None = None,
     ) -> None:
         self._esi_client = esi_client
         self._repo = repository
         self._fuzzwork = fuzzwork_provider
         self._settings = settings_manager
         self._last_used_prices: dict[int, tuple[float, str]] = {}
+        self._schema_ready: bool = False
+        self._sde = sde_provider
+        self._location_service = location_service
+
+    async def _ensure_schema(self) -> None:
+        """Ensure new networth schema columns/tables exist."""
+        if self._schema_ready:
+            return
+        try:
+            cols = await self._repo.get_table_info("networth_snapshots")
+            col_names: set[str] = set()
+            for col in cols:
+                try:
+                    col_names.add(col[1])  # tuple format
+                except Exception:
+                    try:
+                        col_names.add(col["name"])
+                    except Exception:
+                        continue
+
+            if "account_id" not in col_names:
+                await self._repo.execute(
+                    "ALTER TABLE networth_snapshots ADD COLUMN account_id INTEGER"
+                )
+            if "snapshot_group_id" not in col_names:
+                await self._repo.execute(
+                    "ALTER TABLE networth_snapshots ADD COLUMN snapshot_group_id INTEGER"
+                )
+
+            if not await self._repo.table_exists("networth_snapshot_groups"):
+                await self._repo.execute(CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE)
+
+            await self._repo.commit()
+            self._schema_ready = True
+        except Exception:
+            logger.debug("Networth schema migration failed", exc_info=True)
 
     def _get_market_price(self, type_id: int) -> float | None:
         """Get market price for a type from Fuzzwork data."""
@@ -67,6 +110,26 @@ class NetWorthService:
         for region_data in market_data.region_data.values():
             if region_data.sell_stats:
                 return region_data.sell_stats.median
+        return None
+
+    async def _get_price_history_price(self, type_id: int) -> float | None:
+        """Fallback to latest stored price snapshot when live market data is missing."""
+        try:
+            record = await prices.get_latest_jita_price(self._repo, type_id)
+            if record is None:
+                return None
+            candidates = [
+                record.sell_weighted_average,
+                record.sell_median,
+                record.sell_max_price,
+                record.sell_min_price,
+            ]
+            price_val = next((float(v) for v in candidates if v is not None), None)
+            if price_val is not None and price_val > 0:
+                self._last_used_prices[type_id] = (price_val, "history")
+                return price_val
+        except Exception:
+            logger.debug("Price history lookup failed for %s", type_id, exc_info=True)
         return None
 
     def _get_asset_price(self, asset: Any, type_id: int) -> float | None:
@@ -110,7 +173,61 @@ class NetWorthService:
             self._last_used_prices[type_id] = (base_price, "base")
             return base_price
 
+        # Fallback: look up base price from SDE provider if available
+        if self._sde is not None:
+            try:
+                eve_type = self._sde.get_type_by_id(type_id)
+                if eve_type and getattr(eve_type, "base_price", None):
+                    bp = float(eve_type.base_price)
+                    if bp > 0:
+                        self._last_used_prices[type_id] = (bp, "base")
+                        return bp
+            except Exception:
+                logger.debug("SDE base price lookup failed for %s", type_id)
+
         return None
+
+    async def calculate_assets_for_locations(
+        self, character_id: int, include_locations: list[int]
+    ) -> float:
+        """Calculate asset value limited to specific location IDs using latest data."""
+
+        if not include_locations:
+            return 0.0
+        total = 0.0
+        include_set = {int(loc) for loc in include_locations if loc is not None}
+        try:
+            raw_assets = await assets.get_current_assets(self._repo, character_id)
+            by_item_id = {asset.item_id: asset for asset in raw_assets}
+            for asset in raw_assets:
+                try:
+                    if asset.is_blueprint_copy or asset.quantity <= 0:
+                        continue
+                    if include_set:
+                        root_id, _root_type = self._find_root_location(
+                            asset, by_item_id
+                        )
+                        if root_id is None or int(root_id) not in include_set:
+                            continue
+                    per_unit = self._get_asset_price(asset, asset.type_id)
+                    if per_unit is None:
+                        per_unit = await self._get_price_history_price(asset.type_id)
+                    if per_unit and per_unit > 0:
+                        total += per_unit * asset.quantity
+                except Exception:
+                    logger.debug(
+                        "Failed to value asset %s for %s",
+                        getattr(asset, "item_id", None),
+                        character_id,
+                        exc_info=True,
+                    )
+        except Exception:
+            logger.debug(
+                "Failed to compute filtered assets for character %s",
+                character_id,
+                exc_info=True,
+            )
+        return total
 
     async def calculate_networth(self, character_id: int) -> NetWorthSnapshot:
         """Calculate net worth snapshot for a character.
@@ -132,6 +249,36 @@ class NetWorthService:
                 "No wallet balance available for character %d, using 0",
                 character_id,
             )
+
+        # Calculate account-wide PLEX vault value (user-set PLEX units per account).
+        # CCP does not provide an endpoint for PLEX vault; we derive ISK value by
+        # multiplying user-provided PLEX units with market price. To avoid overcounting
+        # across multiple characters in the same account, only the account's primary
+        # character includes the vault value; others record 0.
+        plex_vault = 0.0
+        account_id = None
+        try:
+            primary_char = None
+            if self._settings and hasattr(self._settings, "get_account_for_character"):
+                account_id = self._settings.get_account_for_character(character_id)
+                if account_id is not None and hasattr(
+                    self._settings, "get_primary_character_for_account"
+                ):
+                    primary_char = self._settings.get_primary_character_for_account(
+                        account_id
+                    )
+
+            if account_id is not None and primary_char == character_id:
+                units = 0
+                if hasattr(self._settings, "get_account_plex_units"):
+                    units = int(self._settings.get_account_plex_units(account_id) or 0)
+                if units > 0:
+                    plex_price = self._get_market_price(44992)
+                    if plex_price and plex_price > 0:
+                        plex_vault = units * plex_price
+                        self._last_used_prices[44992] = (plex_price, "market")
+        except Exception:
+            logger.debug("Account PLEX valuation failed", exc_info=True)
 
         market_escrow = 0.0
         market_sell_value = 0.0
@@ -172,6 +319,8 @@ class NetWorthService:
                     continue
 
                 per_unit = self._get_asset_price(asset, type_id)
+                if per_unit is None:
+                    per_unit = await self._get_price_history_price(type_id)
                 if per_unit and per_unit > 0:
                     stack_value = per_unit * quantity
                     total_asset_value += stack_value
@@ -183,6 +332,8 @@ class NetWorthService:
         return NetWorthSnapshot(
             snapshot_id=0,
             character_id=character_id,
+            account_id=account_id,
+            snapshot_group_id=None,
             snapshot_time=snapshot_time,
             total_asset_value=total_asset_value,
             wallet_balance=wallet_balance,
@@ -191,9 +342,166 @@ class NetWorthService:
             contract_collateral=contract_collateral,
             contract_value=contract_value,
             industry_job_value=industry_job_value,
+            plex_vault=plex_vault,
         )
 
-    async def save_networth_snapshot(self, character_id: int) -> int:
+    @staticmethod
+    def _find_root_location(
+        asset: EveAsset, by_item_id: dict[int, EveAsset]
+    ) -> tuple[int | None, str | None]:
+        """Walk parent chain to find the first non-item location."""
+
+        loc_id = asset.location_id
+        loc_type = asset.location_type
+
+        if loc_type != "item":
+            return loc_id, loc_type
+
+        max_hops = 64
+        hops = 0
+        while loc_type == "item" and hops < max_hops:
+            parent = by_item_id.get(loc_id)
+            if parent is None:
+                # Infer based on numeric range if parent row missing
+                if loc_id >= 1_000_000_000_000:
+                    return loc_id, "structure"
+                if 60000000 <= loc_id < 70000000:
+                    return loc_id, "station"
+                if 30000000 <= loc_id < 40000000:
+                    return loc_id, "solar_system"
+                return None, None
+            loc_id = parent.location_id
+            loc_type = parent.location_type
+            hops += 1
+
+        if loc_type == "item":
+            return None, None
+        return loc_id, loc_type
+
+    async def list_asset_locations(
+        self, character_ids: list[int] | None = None
+    ) -> list[AssetLocationOption]:
+        """Return all known root asset locations for the provided characters."""
+
+        if not character_ids:
+            rows = await self._repo.fetchall(
+                "SELECT DISTINCT character_id FROM current_assets"
+            )
+            character_ids = [
+                int(row["character_id"])
+                for row in rows
+                if row["character_id"] is not None
+            ]
+
+        if not character_ids:
+            return []
+
+        stats: dict[int, dict[str, Any]] = {}
+        for cid in character_ids:
+            raw_assets = await assets.get_current_assets(self._repo, cid)
+            if not raw_assets:
+                continue
+            by_item = {asset.item_id: asset for asset in raw_assets}
+            for asset in raw_assets:
+                root_id, root_type = self._find_root_location(asset, by_item)
+                if root_id is None:
+                    continue
+                entry = stats.setdefault(
+                    int(root_id),
+                    {
+                        "asset_count": 0,
+                        "characters": set(),
+                        "location_type": root_type or "",
+                    },
+                )
+                entry["asset_count"] += 1
+                entry["characters"].add(int(cid))
+                if root_type and not entry.get("location_type"):
+                    entry["location_type"] = root_type
+
+        if not stats:
+            return []
+
+        resolved: dict[int, LocationInfo] = {}
+        location_ids = list(stats.keys())
+        if self._location_service is not None:
+            try:
+                resolved = await self._location_service.resolve_locations_bulk(
+                    location_ids,
+                    character_id=character_ids[0],
+                    refresh_stale=False,
+                )
+            except Exception:
+                logger.debug("Failed to resolve asset location names", exc_info=True)
+                resolved = {}
+
+        options: list[AssetLocationOption] = []
+        for loc_id, entry in stats.items():
+            info = resolved.get(loc_id)
+            display_name = None
+            system_name = None
+            category = entry.get("location_type") or ""
+            if info is not None:
+                display_name = info.custom_name or info.name
+                category = info.category or category
+                if info.solar_system_id is not None:
+                    if self._sde is not None:
+                        system_name = self._sde.get_solar_system_name(
+                            info.solar_system_id
+                        )
+                    if not system_name:
+                        system_name = str(info.solar_system_id)
+
+            if not display_name:
+                display_name = f"Location {loc_id}"
+
+            options.append(
+                AssetLocationOption(
+                    location_id=loc_id,
+                    display_name=display_name,
+                    location_type=str(category or ""),
+                    asset_count=int(entry["asset_count"]),
+                    character_count=len(entry["characters"]),
+                    system_name=system_name,
+                )
+            )
+
+        options.sort(key=lambda opt: (opt.display_name.lower(), opt.location_id))
+        return options
+
+    async def create_snapshot_group(
+        self, account_id: int | None = None, label: str | None = None
+    ) -> int:
+        """Create a snapshot group to tie together concurrent snapshots."""
+
+        await self._ensure_schema()
+        cursor = await self._repo.execute(
+            """
+            INSERT INTO networth_snapshot_groups (account_id, created_at, label)
+            VALUES (?, ?, ?)
+            """,
+            (account_id, datetime.now(UTC).isoformat(), label),
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("Failed to create snapshot group")
+        await self._repo.commit()
+        return int(cursor.lastrowid)
+
+    async def update_snapshot(self, snapshot: NetWorthSnapshot) -> None:
+        """Persist edits to an existing net worth snapshot."""
+
+        await self._ensure_schema()
+        await networth.update_snapshot(self._repo, snapshot)
+
+    async def delete_snapshot(self, snapshot_id: int) -> None:
+        """Delete a snapshot by ID."""
+
+        await self._ensure_schema()
+        await networth.delete_snapshot(self._repo, snapshot_id)
+
+    async def save_networth_snapshot(
+        self, character_id: int, snapshot_group_id: int | None = None
+    ) -> int:
         """Calculate and save a net worth snapshot.
 
         Snapshots data already in the repository.
@@ -204,7 +512,9 @@ class NetWorthService:
         Returns:
             Snapshot ID
         """
+        await self._ensure_schema()
         snapshot = await self.calculate_networth(character_id)
+        snapshot.snapshot_group_id = snapshot_group_id
 
         asset_snapshot_id = None
         try:
@@ -218,6 +528,31 @@ class NetWorthService:
                 )
         except Exception:
             logger.debug("Failed to save asset snapshot", exc_info=True)
+
+        # Ensure contract items are saved
+        try:
+            active_contracts_list = await contracts.get_active_contracts(
+                self._repo, character_id
+            )
+            for contract in active_contracts_list:
+                try:
+                    # Check if items already exist
+                    existing_items = await contracts.get_contract_items(
+                        self._repo, contract.contract_id
+                    )
+                    if not existing_items:
+                        logger.debug(
+                            "Contract %d has no items saved, skipping",
+                            contract.contract_id,
+                        )
+                except Exception:
+                    logger.debug(
+                        "Failed to check contract items for %d",
+                        contract.contract_id,
+                        exc_info=True,
+                    )
+        except Exception:
+            logger.debug("Failed to verify contract items", exc_info=True)
 
         price_snapshot_id = None
         if self._last_used_prices and self._fuzzwork:
@@ -269,7 +604,18 @@ class NetWorthService:
             except Exception:
                 logger.exception("Failed to save price snapshot", exc_info=True)
 
-        snapshot_id = await networth.save_snapshot(self._repo, character_id, snapshot)
+        try:
+            # Pass account and group to persistence
+            snapshot_id = await networth.save_snapshot(
+                self._repo,
+                character_id,
+                snapshot,
+                account_id=snapshot.account_id,
+                snapshot_group_id=snapshot_group_id,
+            )
+        except Exception:
+            logger.exception("Failed to persist networth snapshot")
+            raise
         logger.info(
             "Saved net worth snapshot %d for character %d "
             "(asset_snapshot=%s, price_snapshot=%s)",
@@ -284,6 +630,7 @@ class NetWorthService:
         self, character_id: int, days: int = 30
     ) -> list[tuple[datetime, float]]:
         """Get net worth trend over time."""
+        await self._ensure_schema()
         history = await networth.get_networth_history(
             self._repo, character_id, limit=days
         )
@@ -291,6 +638,7 @@ class NetWorthService:
 
     async def compare_networth(self, character_ids: list[int]) -> dict:
         """Compare net worth across multiple characters."""
+        await self._ensure_schema()
         results: dict[int, dict[str, Any]] = {}
         for cid in character_ids:
             latest = await networth.get_latest_networth(self._repo, cid)
@@ -308,13 +656,52 @@ class NetWorthService:
 
     async def get_latest_networth(self, character_id: int) -> NetWorthSnapshot | None:
         """Get the most recent net worth snapshot for a character."""
+        await self._ensure_schema()
         return await networth.get_latest_networth(self._repo, character_id)
 
     async def get_networth_history(
-        self, character_id: int, limit: int = 30
+        self,
+        character_id: int,
+        *,
+        limit: int | None = 30,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> list[NetWorthSnapshot]:
         """Get net worth history for a character."""
-        return await networth.get_networth_history(self._repo, character_id, limit)
+        await self._ensure_schema()
+        return await networth.get_networth_history(
+            self._repo,
+            character_id,
+            limit=limit,
+            start=start,
+            end=end,
+        )
+
+    async def get_snapshots_for_group(
+        self, snapshot_group_id: int, character_ids: list[int] | None = None
+    ) -> list[NetWorthSnapshot]:
+        """Return, for each character, the latest snapshot whose snapshot_group_id <= target.
+
+        Acts as a thin wrapper around the repository helper that implements the
+        ROW_NUMBER() windowing query to pick one snapshot per character.
+        """
+        await self._ensure_schema()
+        return await networth.get_snapshots_for_group(
+            self._repo, snapshot_group_id, character_ids
+        )
+
+    async def get_snapshots_up_to_time(
+        self, target_time: datetime, character_ids: list[int] | None = None
+    ) -> list[NetWorthSnapshot]:
+        """Return, for each character, the latest snapshot whose snapshot_time <= target_time.
+
+        Works with both grouped and legacy (ungrouped) snapshots. Returns at most
+        one snapshot per character.
+        """
+        await self._ensure_schema()
+        return await networth.get_snapshots_up_to_time(
+            self._repo, target_time, character_ids
+        )
 
 
 __all__ = ["NetWorthService"]
