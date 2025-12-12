@@ -3,19 +3,22 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, pyqtSlot
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
+    QCheckBox,
+    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMenu,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -28,10 +31,17 @@ from services.character_service import CharacterService
 from services.contract_service import ContractService
 from services.industry_service import IndustryService
 from services.market_service import MarketService
+from services.networth_service import NetWorthService
 from services.wallet_service import WalletService
 from ui.signal_bus import get_signal_bus
-from ui.widgets import CharacterItemWidget, EndpointTimer
-
+from ui.styles import COLORS, AppStyles
+from ui.widgets import CharacterItemWidget, ProgressWidget
+from ui.widgets.account_group_widget import AccountGroupWidget, EmptyAccountWidget
+from ui.widgets.flow_layout import FlowLayout
+from utils.progress_callback import (
+    CancelToken,
+)
+from utils.settings_manager import get_settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +58,7 @@ class CharactersTab(QWidget):
         market_service: MarketService,
         contract_service: ContractService,
         industry_service: IndustryService,
+        networth_service: NetWorthService | None = None,
         parent=None,
     ):
         """Initialize characters tab.
@@ -70,12 +81,22 @@ class CharactersTab(QWidget):
         self._market_service = market_service
         self._contract_service = contract_service
         self._industry_service = industry_service
+        self._networth_service = networth_service
+        self._settings = get_settings_manager()
         self._signal_bus = get_signal_bus()
         self._background_tasks: set[asyncio.Task] = set()
         self._selected_character_id: int | None = None
+        self._pending_account_layout_refresh: bool = False
 
+        # Cancellation token for refresh operations
+        self._cancel_token: CancelToken | None = None
+        self._refresh_in_progress: bool = False
+
+        self._timers_checkbox_prev_state = True  # Remember last state for timers toggle
         self._setup_ui()
         self._connect_signals()
+        # Cache of last loaded characters for refresh after drag/drop
+        self._last_loaded_characters: list[CharacterInfo] = []
 
     def _setup_ui(self) -> None:
         """Setup user interface."""
@@ -83,187 +104,1090 @@ class CharactersTab(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # Left side: Character list (now integrated)
-        self.list_widget = QListWidget()
-        self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-        self.list_widget.setIconSize(QSize(160, 300))
-        self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.list_widget.setSpacing(10)
-        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.list_widget.customContextMenuRequested.connect(self._show_context_menu)
-        self.list_widget.itemClicked.connect(self._on_item_clicked)
-        main_layout.addWidget(self.list_widget, stretch=2)
+        # Left side: Character list and controls
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(5)
 
-        # Right side: Update controls
-        self.right_widget = QWidget()
-        self.right_layout = QVBoxLayout(self.right_widget)
-        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        # Top buttons row with modern styling
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(8)
 
-        # Title
-        self.title_label = QLabel("<h3>Endpoint Status</h3>")
-        self.right_layout.addWidget(self.title_label)
+        self.add_character_btn = QPushButton("+ Character")
+        self.add_character_btn.setMinimumHeight(32)
+        self.add_character_btn.setMaximumWidth(120)
+        self.add_character_btn.setStyleSheet(AppStyles.BUTTON_PRIMARY)
+        self.add_character_btn.clicked.connect(self._on_add_character_clicked)
+        buttons_row.addWidget(self.add_character_btn)
 
-        # Info label (placeholder)
-        self.info_label = QLabel("Select a character to view endpoint timers")
-        self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("color: gray; font-style: italic;")
-        self.right_layout.addWidget(self.info_label)
+        self.new_account_btn = QPushButton("+ Account")
+        self.new_account_btn.setMinimumHeight(32)
+        self.new_account_btn.setMaximumWidth(120)
+        self.new_account_btn.setStyleSheet(AppStyles.BUTTON_SECONDARY)
+        self.new_account_btn.clicked.connect(self._on_new_account_clicked)
+        buttons_row.addWidget(self.new_account_btn)
 
-        # Endpoint timers container
-        self.timers_widget = QWidget()
-        self.timers_layout = QVBoxLayout(self.timers_widget)
-        self.timers_layout.setContentsMargins(0, 10, 0, 0)
-        self.timers_layout.setSpacing(5)
+        # Global refresh button
+        self.refresh_all_btn = QPushButton("↻ Refresh All")
+        self.refresh_all_btn.setMinimumHeight(32)
+        self.refresh_all_btn.setMaximumWidth(120)
+        self.refresh_all_btn.setToolTip(
+            "Refresh all characters and save fresh networth snapshots"
+        )
+        self.refresh_all_btn.setStyleSheet(AppStyles.BUTTON_WARNING)
+        self.refresh_all_btn.clicked.connect(self._on_refresh_all_characters)
+        buttons_row.addWidget(self.refresh_all_btn)
 
-        self.endpoint_timers: dict[str, EndpointTimer] = {}
-        endpoint_names = [
-            "Assets",
-            "Wallet Journal",
-            "Wallet Transactions",
-            "Market Orders",
-            "Contracts",
-            "Industry Jobs",
-        ]
+        buttons_row.addStretch()
+        left_layout.addLayout(buttons_row)
 
-        for name in endpoint_names:
-            timer = EndpointTimer(name)
-            self.endpoint_timers[name] = timer
-            self.timers_layout.addWidget(timer)
+        # View controls row
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(12)
 
-        self.timers_layout.addStretch()
-        self.right_layout.addWidget(self.timers_widget)
+        self.timers_checkbox = QCheckBox("Show endpoint timers")
+        self.timers_checkbox.setChecked(True)
+        self.timers_checkbox.setStyleSheet(AppStyles.CHECKBOX)
+        self.timers_checkbox.stateChanged.connect(self._on_timers_toggle)
+        controls_row.addWidget(self.timers_checkbox)
 
-        # Progress bar for updates
+        self.listview_checkbox = QCheckBox("List view")
+        self.listview_checkbox.setChecked(False)
+        self.listview_checkbox.setStyleSheet(AppStyles.CHECKBOX)
+        self.listview_checkbox.stateChanged.connect(self._on_listview_toggle)
+        controls_row.addWidget(self.listview_checkbox)
+
+        controls_row.addStretch()
+        left_layout.addLayout(controls_row)
+
+        # Progress widget for refresh operations (hidden by default)
+        self._progress_widget = ProgressWidget()
+        self._progress_widget.cancel_clicked.connect(self._on_cancel_refresh)
+        left_layout.addWidget(self._progress_widget)
+
+        # Card view: Scroll area for account groups
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.scroll_area.setStyleSheet(
+            f"QScrollArea {{ background-color: {COLORS.BG_DARK}; }}"
+            + AppStyles.SCROLLBAR
+        )
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+        # Main scroll content container
+        self.scroll_content = QWidget()
+        scroll_content_layout = QVBoxLayout(self.scroll_content)
+        scroll_content_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_content_layout.setSpacing(8)
+
+        # Container widget for account groups with characters
+        self.accounts_container = QWidget()
+        self.accounts_container.installEventFilter(self)
+        self.accounts_layout = FlowLayout(self.accounts_container)
+        self.accounts_layout.setContentsMargins(4, 4, 4, 4)
+        self.accounts_layout.setHorizontalSpacing(8)
+        self.accounts_layout.setVerticalSpacing(8)
+        scroll_content_layout.addWidget(self.accounts_container)
+
+        # Container for empty accounts (compact stacked display)
+        self.empty_accounts_container = QWidget()
+        self.empty_accounts_layout = QVBoxLayout(self.empty_accounts_container)
+        self.empty_accounts_layout.setContentsMargins(4, 0, 4, 4)
+        self.empty_accounts_layout.setSpacing(4)
+
+        # Header for empty accounts section
+        self.empty_accounts_header = QLabel("Empty Accounts (drop characters here)")
+        self.empty_accounts_header.setStyleSheet(
+            f"font-size: 11px; color: {COLORS.TEXT_DISABLED}; padding: 4px 0;"
+        )
+        self.empty_accounts_header.hide()
+        self.empty_accounts_layout.addWidget(self.empty_accounts_header)
+
+        # Flow-style layout for compact empty accounts
+        self.empty_accounts_flow = QWidget()
+        self.empty_accounts_flow_layout = QGridLayout(self.empty_accounts_flow)
+        self.empty_accounts_flow_layout.setContentsMargins(0, 0, 0, 0)
+        self.empty_accounts_flow_layout.setHorizontalSpacing(6)
+        self.empty_accounts_flow_layout.setVerticalSpacing(4)
+        self.empty_accounts_layout.addWidget(self.empty_accounts_flow)
+
+        scroll_content_layout.addWidget(self.empty_accounts_container)
+        scroll_content_layout.addStretch()
+
+        self.scroll_area.setWidget(self.scroll_content)
+        left_layout.addWidget(self.scroll_area)
+
+        # List view: Table widget (hidden by default)
+        self.list_table = QTableWidget()
+        self.list_table.setColumnCount(12)
+        self.list_table.setHorizontalHeaderLabels(
+            [
+                "Name",
+                "Account",
+                "Corporation",
+                "Alliance",
+                "Wallet",
+                "Assets",
+                "Escrow",
+                "Sell Orders",
+                "Contracts",
+                "Collateral",
+                "Industry",
+                "Net Worth",
+            ]
+        )
+        self.list_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.list_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.list_table.setAlternatingRowColors(True)
+        self.list_table.setStyleSheet(AppStyles.TABLE + AppStyles.SCROLLBAR)
+        # Make columns stretch to fill available space
+        header = self.list_table.horizontalHeader()
+        if header is not None:
+            # Text columns stretch; numeric columns size to contents
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Name
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Account
+            header.setSectionResizeMode(
+                2, QHeaderView.ResizeMode.Stretch
+            )  # Corporation
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)  # Alliance
+            for i in range(4, 12):  # Numeric columns
+                header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        v_header = self.list_table.verticalHeader()
+        if v_header is not None:
+            v_header.setVisible(False)
+        self.list_table.hide()
+        left_layout.addWidget(self.list_table)
+
+        # Track account group widgets (both full and empty)
+        self.account_groups: dict[
+            int | None, AccountGroupWidget | EmptyAccountWidget
+        ] = {}
+        self._account_group_widgets: list[AccountGroupWidget] = []
+        self._empty_account_widgets: list[EmptyAccountWidget] = []
+        self._account_columns: int = 1
+
+        # Add left widget directly to main layout (no splitter/side panel)
+        main_layout.addWidget(left_widget)
+
+        # Endpoint timers are now in the networth tab
+        # Endpoint timers moved to networth tab - no longer needed here
+        # self.endpoint_timers: dict[str, EndpointTimer] = {}
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.right_layout.addWidget(self.progress_bar)
-
-        # Update all endpoints for selected character
-        self.update_button = QPushButton("Update All Endpoints")
-        self.update_button.setEnabled(False)
-        self.update_button.clicked.connect(self._on_update_all)
-        self.right_layout.addWidget(self.update_button)
-
-        # Update all characters button
-        self.update_all_characters_button = QPushButton("Update All Characters")
-        self.update_all_characters_button.setEnabled(True)
-        self.update_all_characters_button.clicked.connect(
-            self._on_update_all_characters
-        )
-        self.right_layout.addWidget(self.update_all_characters_button)
-
-        # Finalize right layout and add to main layout
-        self.right_layout.addStretch()
-        main_layout.addWidget(self.right_widget, stretch=1)
-        # Initially hide endpoint timers and controls, show placeholder
-        self._show_placeholder(True)
+        # self.update_button: Removed (no longer used)
+        # self.update_all_characters_button: Removed (no longer used)
 
     @asyncSlot()
     async def _on_update_all_characters(self) -> None:
-        """Update all endpoints for all characters."""
+        """Update all endpoints for all characters using parallel updates.
+
+        Note: This method is similar to _on_refresh_all_characters but doesn't
+        create networth snapshots. Use _on_refresh_all_characters for full refresh.
+        """
+        # Delegate to the parallel refresh implementation
+        await self._on_refresh_all_characters()
+
+    @asyncSlot(int)
+    async def _on_refresh_character(self, character_id: int) -> None:
+        """Refresh a single character's data using parallel endpoint updates."""
+        # Create a cancel token for this operation
+        self._cancel_token = CancelToken()
+        self._refresh_in_progress = True
+
         try:
-            # Get all character IDs from the integrated character list
-            character_ids = []
-            for i in range(self.list_widget.count()):
-                item = self.list_widget.item(i)
-                if item:
-                    cid = item.data(Qt.ItemDataRole.UserRole)
-                    if cid:
-                        character_ids.append(cid)
+            # Get character name for display
+            char_name = self._get_character_name(character_id)
 
-            if not character_ids:
-                self._signal_bus.info_message.emit("No characters to update.")
-                return
+            self._signal_bus.status_message.emit(f"Refreshing character {char_name}...")
 
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setMaximum(len(character_ids) * 6)
-            self.progress_bar.setValue(0)
-            self.update_all_characters_button.setEnabled(False)
-            self.update_button.setEnabled(False)
+            snapshot_group_id = None
+            if self._networth_service is not None:
+                try:
+                    account_for_char = None
+                    if hasattr(self._settings, "get_account_for_character"):
+                        account_for_char = self._settings.get_account_for_character(
+                            character_id
+                        )
+                    snapshot_group_id = (
+                        await self._networth_service.create_snapshot_group(
+                            account_for_char, label="Manual refresh"
+                        )
+                    )
+                except Exception:
+                    logger.debug(
+                        "Unable to create snapshot group for character %s",
+                        character_id,
+                        exc_info=True,
+                    )
 
-            self._signal_bus.status_message.emit(
-                f"Updating all endpoints for {len(character_ids)} characters..."
+            # Run parallel endpoint updates
+            results = await self._refresh_character_endpoints_parallel(
+                character_id, char_name
             )
 
-            updates = [
-                ("assets", self._update_assets),
-                ("wallet journal", self._update_wallet_journal),
-                ("wallet transactions", self._update_wallet_transactions),
-                ("market orders", self._update_market_orders),
-                ("contracts", self._update_contracts),
-                ("industry jobs", self._update_industry_jobs),
-            ]
+            # Check if cancelled
+            if self._cancel_token and self._cancel_token.is_cancelled:
+                self._signal_bus.status_message.emit("Refresh cancelled")
+                return
 
-            progress = 0
-            for character_id in character_ids:
-                for name, update_func in updates:
+            # Count successes and failures
+            successes = sum(1 for r in results if r is True)
+            failures = sum(1 for r in results if isinstance(r, Exception))
+
+            # Persist networth snapshot first so UI picks up new values
+            if self._networth_service is not None:
+                try:
+                    await self._networth_service.save_networth_snapshot(
+                        character_id, snapshot_group_id
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to snapshot networth after refresh for %s",
+                        character_id,
+                        exc_info=True,
+                    )
+
+                char_widget = self._find_character_widget(character_id)
+                if char_widget:
+                    character = next(
+                        (
+                            c
+                            for c in self._last_loaded_characters
+                            if getattr(c, "character_id", 0) == character_id
+                        ),
+                        None,
+                    )
+                    if character:
+                        await self._load_networth(character, char_widget)
+                        # Publish endpoint timers now that endpoints have been fetched
+                        self._publish_endpoint_timers(character_id)
+
+            if failures > 0:
+                self._signal_bus.status_message.emit(
+                    f"{char_name}: {successes}/6 endpoints refreshed ({failures} failed)"
+                )
+            else:
+                self._signal_bus.status_message.emit(
+                    f"{char_name} refreshed successfully!"
+                )
+
+            # Broadcast updated characters so other tabs (assets/networth) refresh
+            try:
+                characters_for_signal = list(self._last_loaded_characters)
+                if not characters_for_signal:
                     try:
-                        self._signal_bus.status_message.emit(
-                            f"Updating {name} for character {character_id}..."
+                        characters_for_signal = (
+                            await self._character_service.get_authenticated_characters()
                         )
-                        await update_func(character_id)
-                        progress += 1
-                        self.progress_bar.setValue(progress)
                     except Exception:
-                        logger.exception(
-                            f"Failed to update {name} for character {character_id}"
+                        characters_for_signal = []
+                if characters_for_signal:
+                    self._signal_bus.characters_loaded.emit(characters_for_signal)
+            except Exception:
+                logger.debug(
+                    "Failed to broadcast characters_loaded after single refresh",
+                    exc_info=True,
+                )
+        except Exception:
+            logger.exception(f"Failed to refresh character {character_id}")
+            self._signal_bus.error_occurred.emit(
+                f"Failed to refresh character {character_id}"
+            )
+        finally:
+            self._refresh_in_progress = False
+            self._cancel_token = None
+            self._request_account_relayout()
+
+    async def _refresh_character_endpoints_parallel(
+        self, character_id: int, char_name: str
+    ) -> list[bool | BaseException]:
+        """Run all endpoint updates in parallel for a character.
+
+        Args:
+            character_id: Character ID to refresh
+            char_name: Character name for display
+
+        Returns:
+            List of results - True for success, BaseException for failure
+        """
+        endpoints = [
+            ("assets", self._update_assets),
+            ("wallet_journal", self._update_wallet_journal),
+            ("wallet_transactions", self._update_wallet_transactions),
+            ("market_orders", self._update_market_orders),
+            ("contracts", self._update_contracts),
+            ("industry_jobs", self._update_industry_jobs),
+        ]
+
+        total_endpoints = len(endpoints)
+        completed = [0]  # Use list to allow mutation in nested function
+
+        # Start progress widget
+        self._progress_widget.start_operation(
+            f"Refreshing {char_name}", total=total_endpoints
+        )
+
+        async def run_endpoint(name: str, func) -> bool | Exception:
+            """Run a single endpoint (ESI client handles rate limiting)."""
+            if self._cancel_token and self._cancel_token.is_cancelled:
+                return Exception("Cancelled")
+
+            try:
+                # ESI client handles rate limiting internally via RateLimitTracker
+                if self._cancel_token and self._cancel_token.is_cancelled:
+                    return Exception("Cancelled")
+                await func(character_id)
+
+                # Update progress
+                completed[0] += 1
+                self._progress_widget.update_progress(
+                    completed[0],
+                    f"Fetching {char_name} ({completed[0]}/{total_endpoints} endpoints)",
+                )
+                return True
+            except Exception as e:
+                logger.exception(
+                    f"Failed to update {name} for character {character_id}"
+                )
+                completed[0] += 1
+                self._progress_widget.update_progress(
+                    completed[0],
+                    f"Fetching {char_name} ({completed[0]}/{total_endpoints} endpoints)",
+                )
+                return e
+
+        try:
+            results = await asyncio.gather(
+                *[run_endpoint(name, func) for name, func in endpoints],
+                return_exceptions=True,
+            )
+
+            # Complete progress
+            failures = sum(1 for r in results if isinstance(r, Exception))
+            if failures > 0:
+                self._progress_widget.complete(
+                    f"{char_name}: {total_endpoints - failures}/{total_endpoints} succeeded"
+                )
+            else:
+                self._progress_widget.complete(f"{char_name} refreshed!")
+
+            # Publish endpoint timers now that endpoints have been fetched
+            # This allows the UI to show cache expiry indicators for this character
+            self._publish_endpoint_timers(character_id)
+
+            return list(results)
+        except Exception:
+            self._progress_widget.error(f"Failed to refresh {char_name}")
+            raise
+
+    def _get_character_name(self, character_id: int) -> str:
+        """Get character name from ID."""
+        for char in self._last_loaded_characters:
+            if getattr(char, "character_id", 0) == character_id:
+                return getattr(char, "name", f"Character {character_id}")
+        return f"Character {character_id}"
+
+    def _on_cancel_refresh(self) -> None:
+        """Handle cancel button click from progress widget."""
+        if self._cancel_token:
+            self._cancel_token.cancel()
+            self._progress_widget.cancel()
+            self._signal_bus.status_message.emit("Cancelling refresh operation...")
+
+    @asyncSlot(object)
+    async def _on_refresh_account(self, account_id: int | None) -> None:
+        """Refresh all characters in an account with parallel endpoint updates."""
+        # Create a cancel token for this operation
+        self._cancel_token = CancelToken()
+        self._refresh_in_progress = True
+
+        try:
+            # Get all character IDs for this account
+            character_ids = []
+            for card in self._get_account_character_cards(account_id):
+                character_ids.append(card.character_id)
+
+            if not character_ids:
+                self._signal_bus.info_message.emit("No characters in this account.")
+                return
+
+            account_name = f"Account {account_id}" if account_id else "Unassigned"
+            total_chars = len(character_ids)
+            self._signal_bus.status_message.emit(
+                f"Refreshing {total_chars} characters in {account_name}..."
+            )
+
+            # Start overall progress
+            self._progress_widget.start_operation(
+                f"Refreshing {account_name}", total=total_chars * 6
+            )
+
+            completed_endpoints = 0
+            total_successes = 0
+            total_failures = 0
+
+            # Refresh each character with parallel endpoints
+            for idx, character_id in enumerate(character_ids):
+                # Check for cancellation
+                if self._cancel_token and self._cancel_token.is_cancelled:
+                    self._signal_bus.status_message.emit("Refresh cancelled")
+                    self._progress_widget.cancel()
+                    return
+
+                char_name = self._get_character_name(character_id)
+
+                # Create snapshot group
+                snapshot_group_id = None
+                if self._networth_service is not None:
+                    try:
+                        snapshot_group_id = (
+                            await self._networth_service.create_snapshot_group(
+                                account_id, label="Account refresh"
+                            )
                         )
-                        self._signal_bus.error_occurred.emit(
-                            f"Failed to update {name} for character {character_id}. Check logs for details."
+                    except Exception:
+                        logger.debug(
+                            "Unable to create snapshot group for character %s",
+                            character_id,
+                            exc_info=True,
                         )
 
-            self._signal_bus.status_message.emit("All characters updated successfully!")
+                # Run parallel endpoint updates
+                results = await self._refresh_character_endpoints_parallel_batch(
+                    character_id, char_name, idx + 1, total_chars, completed_endpoints
+                )
 
-            # Refresh timers for selected character
-            self._update_endpoint_timers()
+                # Count results
+                char_successes = sum(1 for r in results if r is True)
+                char_failures = sum(1 for r in results if isinstance(r, Exception))
+                total_successes += char_successes
+                total_failures += char_failures
+                completed_endpoints += len(results)
+
+                # Save networth snapshot
+                if self._networth_service is not None:
+                    try:
+                        await self._networth_service.save_networth_snapshot(
+                            character_id, snapshot_group_id
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Failed to snapshot networth after refresh for %s",
+                            character_id,
+                            exc_info=True,
+                        )
+
+                # Update character widget
+                char_widget = self._find_character_widget(character_id)
+                if char_widget:
+                    character = next(
+                        (
+                            c
+                            for c in self._last_loaded_characters
+                            if getattr(c, "character_id", 0) == character_id
+                        ),
+                        None,
+                    )
+                    if character:
+                        await self._load_networth(character, char_widget)
+
+            # Complete progress
+            if total_failures > 0:
+                self._progress_widget.complete(
+                    f"{account_name}: {total_failures} endpoint failures"
+                )
+                self._signal_bus.status_message.emit(
+                    f"{account_name} refreshed with {total_failures} failures"
+                )
+            else:
+                self._progress_widget.complete(f"{account_name} refreshed!")
+                self._signal_bus.status_message.emit(
+                    f"{account_name} refreshed successfully!"
+                )
+
+            # Broadcast updated characters
+            try:
+                characters_for_signal = list(self._last_loaded_characters)
+                if characters_for_signal:
+                    self._signal_bus.characters_loaded.emit(characters_for_signal)
+            except Exception:
+                logger.debug(
+                    "Failed to broadcast characters_loaded after account refresh",
+                    exc_info=True,
+                )
 
         except Exception:
-            logger.exception("Failed to update all characters")
-            self._signal_bus.error_occurred.emit("Failed to update all characters")
+            logger.exception(f"Failed to refresh account {account_id}")
+            self._progress_widget.error("Failed to refresh account")
+            self._signal_bus.error_occurred.emit("Failed to refresh account")
         finally:
-            self.progress_bar.setVisible(False)
-            self.update_all_characters_button.setEnabled(True)
-            self.update_button.setEnabled(True)
+            self._refresh_in_progress = False
+            self._cancel_token = None
+            self._request_account_relayout()
 
-    def _show_placeholder(self, show: bool) -> None:
-        """Show or hide the placeholder info label and endpoint controls."""
-        self.info_label.setVisible(show)
-        self.title_label.setVisible(not show)
-        self.timers_widget.setVisible(not show)
-        self.progress_bar.setVisible(False if show else self.progress_bar.isVisible())
-        self.update_button.setVisible(not show)
+    @asyncSlot()
+    async def _on_refresh_all_characters(self) -> None:
+        """Refresh all characters across all accounts with parallel endpoint updates."""
+        # Create a cancel token for this operation
+        self._cancel_token = CancelToken()
+        self._refresh_in_progress = True
+
+        try:
+            character_ids = [
+                getattr(ch, "character_id", 0)
+                for ch in self._last_loaded_characters
+                if getattr(ch, "character_id", 0)
+            ]
+
+            if not character_ids:
+                self._signal_bus.info_message.emit("No characters to refresh.")
+                return
+
+            total_chars = len(character_ids)
+            self._signal_bus.status_message.emit(
+                f"Refreshing all {total_chars} characters..."
+            )
+
+            # Start overall progress
+            self._progress_widget.start_operation(
+                f"Refreshing {total_chars} characters", total=total_chars * 6
+            )
+
+            completed_endpoints = 0
+            total_successes = 0
+            total_failures = 0
+
+            for idx, character_id in enumerate(character_ids):
+                # Check for cancellation
+                if self._cancel_token and self._cancel_token.is_cancelled:
+                    self._signal_bus.status_message.emit("Refresh cancelled")
+                    self._progress_widget.cancel()
+                    return
+
+                char_name = self._get_character_name(character_id)
+
+                # Create snapshot group for this character
+                snapshot_group_id = None
+                if self._networth_service is not None:
+                    try:
+                        account_for_char = None
+                        if hasattr(self._settings, "get_account_for_character"):
+                            account_for_char = self._settings.get_account_for_character(
+                                character_id
+                            )
+                        snapshot_group_id = (
+                            await self._networth_service.create_snapshot_group(
+                                account_for_char, label="Refresh all"
+                            )
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Unable to create snapshot group for character %s",
+                            character_id,
+                            exc_info=True,
+                        )
+
+                # Run parallel endpoint updates for this character
+                results = await self._refresh_character_endpoints_parallel_batch(
+                    character_id, char_name, idx + 1, total_chars, completed_endpoints
+                )
+
+                # Count results
+                char_successes = sum(1 for r in results if r is True)
+                char_failures = sum(1 for r in results if isinstance(r, Exception))
+                total_successes += char_successes
+                total_failures += char_failures
+                completed_endpoints += len(results)
+
+                # Save networth snapshot
+                if self._networth_service is not None:
+                    try:
+                        await self._networth_service.save_networth_snapshot(
+                            character_id, snapshot_group_id
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Failed to snapshot networth after refresh for %s",
+                            character_id,
+                            exc_info=True,
+                        )
+
+                # Update character widget
+                char_widget = self._find_character_widget(character_id)
+                if char_widget:
+                    character = next(
+                        (
+                            c
+                            for c in self._last_loaded_characters
+                            if getattr(c, "character_id", 0) == character_id
+                        ),
+                        None,
+                    )
+                    if character:
+                        await self._load_networth(character, char_widget)
+
+            # Complete progress
+            if total_failures > 0:
+                self._progress_widget.complete(
+                    f"Refreshed {total_chars} characters ({total_failures} endpoint failures)"
+                )
+                self._signal_bus.status_message.emit(
+                    f"All characters refreshed with {total_failures} failures"
+                )
+            else:
+                self._progress_widget.complete(
+                    f"All {total_chars} characters refreshed!"
+                )
+                self._signal_bus.status_message.emit(
+                    "All characters refreshed successfully!"
+                )
+
+            # Broadcast updated characters
+            try:
+                characters_for_signal = list(self._last_loaded_characters)
+                if characters_for_signal:
+                    self._signal_bus.characters_loaded.emit(characters_for_signal)
+            except Exception:
+                logger.debug(
+                    "Failed to broadcast characters_loaded after refresh all",
+                    exc_info=True,
+                )
+
+        except Exception:
+            logger.exception("Failed to refresh all characters")
+            self._progress_widget.error("Failed to refresh all characters")
+            self._signal_bus.error_occurred.emit("Failed to refresh all characters")
+        finally:
+            self._refresh_in_progress = False
+            self._cancel_token = None
+            self._request_account_relayout()
+
+    async def _refresh_character_endpoints_parallel_batch(
+        self,
+        character_id: int,
+        char_name: str,
+        char_index: int,
+        total_chars: int,
+        completed_endpoints: int,
+    ) -> list[bool | BaseException]:
+        """Run all endpoint updates in parallel for a character in batch mode.
+
+        Args:
+            character_id: Character ID to refresh
+            char_name: Character name for display
+            char_index: Current character index (1-based)
+            total_chars: Total number of characters being refreshed
+            completed_endpoints: Number of endpoints already completed
+
+        Returns:
+            List of results - True for success, BaseException for failure
+        """
+        endpoints = [
+            ("assets", self._update_assets),
+            ("wallet_journal", self._update_wallet_journal),
+            ("wallet_transactions", self._update_wallet_transactions),
+            ("market_orders", self._update_market_orders),
+            ("contracts", self._update_contracts),
+            ("industry_jobs", self._update_industry_jobs),
+        ]
+
+        total_all_endpoints = total_chars * len(endpoints)
+        completed = [
+            completed_endpoints
+        ]  # Use list to allow mutation in nested function
+
+        async def run_endpoint(name: str, func) -> bool | Exception:
+            """Run a single endpoint (ESI client handles rate limiting)."""
+            if self._cancel_token and self._cancel_token.is_cancelled:
+                return Exception("Cancelled")
+
+            try:
+                # ESI client handles rate limiting internally via RateLimitTracker
+                if self._cancel_token and self._cancel_token.is_cancelled:
+                    return Exception("Cancelled")
+                await func(character_id)
+
+                # Update progress
+                completed[0] += 1
+                self._progress_widget.update_progress(
+                    completed[0],
+                    f"{char_name} ({char_index}/{total_chars}) - {completed[0]}/{total_all_endpoints}",
+                )
+                return True
+            except Exception as e:
+                logger.exception(
+                    f"Failed to update {name} for character {character_id}"
+                )
+                completed[0] += 1
+                self._progress_widget.update_progress(
+                    completed[0],
+                    f"{char_name} ({char_index}/{total_chars}) - {completed[0]}/{total_all_endpoints}",
+                )
+                return e
+
+        results = await asyncio.gather(
+            *[run_endpoint(name, func) for name, func in endpoints],
+            return_exceptions=True,
+        )
+
+        return list(results)
+
+    def _find_character_widget(self, character_id: int):
+        """Find the character widget for a given character ID."""
+        for group in self.account_groups.values():
+            for card in group.character_cards:
+                if card.character_id == character_id:
+                    return card.character_widget
+        return None
+
+    def _get_account_character_cards(self, account_id: int | None):
+        """Get all character cards for a given account."""
+        group = self.account_groups.get(account_id)
+        if group:
+            return group.character_cards
+        return []
 
     def _connect_signals(self) -> None:
         """Connect signals."""
         self._signal_bus.character_selected.connect(self._on_character_selected)
+        self._signal_bus.character_added.connect(self._on_character_added)
+        self._signal_bus.character_removed.connect(self._on_character_removed)
+        # Listen for centralized character loading
+        self._signal_bus.characters_loaded.connect(self._on_characters_loaded)
+        # Listen for account changes to refresh UI
+        self._signal_bus.account_changed.connect(self._on_account_changed)
 
-    def load_initial_characters(self):
-        task = asyncio.create_task(self._load_characters())
-        if not hasattr(self, "_background_tasks"):
-            self._background_tasks = set()
+    @pyqtSlot()
+    def _on_account_changed(self) -> None:
+        """Handle account structure changes - refresh the UI."""
+        logger.debug("Account changed signal received, refreshing UI")
+        task = asyncio.create_task(self._refresh_after_reassign())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _load_characters(self):
-        try:
-            characters = await self._character_service.get_authenticated_characters()
-            for character in characters:
-                await self._add_character(character)
-        except Exception:
-            logger.exception("Failed to load characters")
-            self._signal_bus.error_occurred.emit("Failed to load characters")
+    def _on_characters_loaded(self, characters: list) -> None:
+        """Handle centrally-loaded characters.
 
-    async def _add_character(self, character):
-        item = QListWidgetItem(self.list_widget)
-        item.setSizeHint(QSize(180, 320))
-        item.setData(Qt.ItemDataRole.UserRole, getattr(character, "character_id", None))
+        Args:
+            characters: List of CharacterInfo objects from central loader
+        """
+        logger.debug("Received %d characters from central loader", len(characters))
+        try:
+            self._last_loaded_characters = list(characters)
+        except Exception:
+            self._last_loaded_characters = characters
+        task = asyncio.create_task(self._populate_characters(characters))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _populate_characters(self, characters: list):
+        """Populate UI with characters grouped by account (async)."""
+        try:
+            # Clear existing account groups
+            for group in self.account_groups.values():
+                group.deleteLater()
+            self.account_groups.clear()
+
+            # Clear grid layout
+            while self.accounts_layout.count():
+                item = self.accounts_layout.takeAt(0)
+                if item is None:
+                    break
+                try:
+                    w = item.widget()
+                except Exception:
+                    w = None
+                if w is not None:
+                    w.setParent(self.accounts_container)
+
+            # Clear empty accounts flow layout
+            while self.empty_accounts_flow_layout.count():
+                item = self.empty_accounts_flow_layout.takeAt(0)
+                if item is None:
+                    break
+                try:
+                    w = item.widget()
+                except Exception:
+                    w = None
+                if w is not None:
+                    w.deleteLater()
+
+            self._account_group_widgets.clear()
+            self._empty_account_widgets: list[EmptyAccountWidget] = []
+
+            # Always hide list view table when repopulating cards
+            self.list_table.hide()
+            self.scroll_area.show()
+
+            # Build grouping by account using settings
+            accounts = self._settings.get_accounts()
+            # Map char_id -> account_id
+            char_to_acc: dict[int, int] = {}
+            for acc_id, acc in accounts.items():
+                for cid in acc.get("characters", []):
+                    char_to_acc[int(cid)] = int(acc_id)
+
+            # Bucket characters
+            acc_buckets: dict[int | None, list] = {}
+            for ch in characters:
+                acc_id = char_to_acc.get(getattr(ch, "character_id", 0))
+                acc_buckets.setdefault(acc_id, []).append(ch)
+
+            # Separate accounts with characters from empty accounts
+            all_account_ids = sorted(accounts.keys())
+            accounts_with_chars = []
+            empty_accounts = []
+
+            for acc_id in all_account_ids:
+                if acc_buckets.get(acc_id):
+                    accounts_with_chars.append(acc_id)
+                else:
+                    empty_accounts.append(acc_id)
+
+            # Create full AccountGroupWidget for accounts with characters
+            for acc_id in accounts_with_chars:
+                acc = accounts.get(acc_id, {})
+                acc_name = acc.get("name") or f"Account {acc_id}"
+                plex_units = int(acc.get("plex_units", 0))
+
+                group = AccountGroupWidget(acc_id, acc_name, plex_units)
+                group.character_dropped.connect(self._on_character_dropped)
+                group.character_clicked.connect(self._on_character_clicked)
+                group.character_context_menu.connect(self._show_context_menu)
+                group.account_refresh_requested.connect(self._on_refresh_account)
+
+                for ch in acc_buckets.get(acc_id, []):
+                    char_widget = await self._create_character_widget(ch)
+                    group.add_character(getattr(ch, "character_id", 0), char_widget)
+
+                self._account_group_widgets.append(group)
+                self.account_groups[acc_id] = group
+
+            # Create compact EmptyAccountWidget for empty accounts
+            for acc_id in empty_accounts:
+                acc = accounts.get(acc_id, {})
+                acc_name = acc.get("name") or f"Account {acc_id}"
+                plex_units = int(acc.get("plex_units", 0))
+
+                empty_widget = EmptyAccountWidget(acc_id, acc_name, plex_units)
+                empty_widget.character_dropped.connect(self._on_character_dropped)
+                empty_widget.account_refresh_requested.connect(self._on_refresh_account)
+                self._empty_account_widgets.append(empty_widget)
+                self.account_groups[acc_id] = empty_widget
+
+            # Unassigned group if any characters are not assigned
+            if None in acc_buckets:
+                group = AccountGroupWidget(None, "Unassigned")
+                group.character_dropped.connect(self._on_character_dropped)
+                group.character_clicked.connect(self._on_character_clicked)
+                group.character_context_menu.connect(self._show_context_menu)
+                group.account_refresh_requested.connect(self._on_refresh_account)
+
+                for ch in acc_buckets.get(None, []):
+                    char_widget = await self._create_character_widget(ch)
+                    group.add_character(getattr(ch, "character_id", 0), char_widget)
+
+                self._account_group_widgets.append(group)
+                self.account_groups[None] = group
+
+            # Add account groups to the flow layout
+            for group in self._account_group_widgets:
+                self.accounts_layout.addWidget(group)
+
+            # Layout empty accounts in a grid (3 columns max for compact display)
+            if self._empty_account_widgets:
+                self.empty_accounts_header.show()
+                col = 0
+                row = 0
+                max_cols = 3
+                for empty_widget in self._empty_account_widgets:
+                    self.empty_accounts_flow_layout.addWidget(empty_widget, row, col)
+                    col += 1
+                    if col >= max_cols:
+                        col = 0
+                        row += 1
+            else:
+                self.empty_accounts_header.hide()
+
+            self.accounts_container.updateGeometry()
+        except Exception:
+            logger.exception("Failed to populate characters")
+            self._signal_bus.error_occurred.emit("Failed to populate characters")
+
+    def _request_account_relayout(self) -> None:
+        """Schedule a deferred account grid recalculation."""
+        if self._pending_account_layout_refresh:
+            return
+
+        self._pending_account_layout_refresh = True
+
+        def _trigger() -> None:
+            self._pending_account_layout_refresh = False
+            try:
+                self._recalculate_account_columns(force=True)
+            except Exception:
+                logger.debug("Deferred account relayout failed", exc_info=True)
+
+        try:
+            QTimer.singleShot(0, _trigger)
+        except Exception:
+            self._pending_account_layout_refresh = False
+            self._recalculate_account_columns(force=True)
+
+    def _recalculate_account_columns(self, force: bool = False) -> None:
+        """Reflow account cards safely using the FlowLayout.
+
+        The FlowLayout already handles wrapping; this helper simply nudges
+        geometry updates and tracks an approximate column count to avoid the
+        AttributeError seen in deferred relayout callbacks.
+        """
+        try:
+            container = getattr(self, "accounts_container", None)
+            layout = getattr(self, "accounts_layout", None)
+            if container is None or layout is None:
+                return
+
+            viewport = None
+            try:
+                viewport = self.scroll_area.viewport()
+            except Exception:
+                viewport = None
+
+            available_width = (
+                viewport.width() if viewport is not None else container.width()
+            )
+            if available_width <= 0:
+                available_width = container.sizeHint().width() or 1
+
+            try:
+                spacing = layout.horizontalSpacing() or 0
+            except Exception:
+                spacing = 0
+
+            try:
+                max_card_width = max(
+                    (w.sizeHint().width() for w in self._account_group_widgets),
+                    default=240,
+                )
+            except Exception:
+                max_card_width = 240
+
+            calculated_columns = max(
+                1, int(available_width / (max_card_width + spacing or 1))
+            )
+
+            if force or calculated_columns != getattr(self, "_account_columns", 1):
+                self._account_columns = calculated_columns
+                container.updateGeometry()
+                container.adjustSize()
+                try:
+                    layout.setGeometry(container.geometry())
+                except Exception:
+                    pass
+                container.update()
+                try:
+                    self.scroll_content.updateGeometry()
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("Failed to recalculate account columns", exc_info=True)
+
+    def _get_endpoint_timers(self, character_id: int) -> dict[str, float | None]:
+        """Look up cache expiry timers for endpoints feeding networth data."""
+        timers: dict[str, float | None] = {}
+
+        cache = getattr(self._esi_client, "cache", None)
+        if cache is None:
+            return timers
+
+        def ttl(method: str, path: str, params: dict | None) -> float | None:
+            try:
+                return cache.time_to_expiry(method, path, params)
+            except Exception:
+                return None
+
+        try:
+            timers["assets"] = ttl(
+                "GET", f"/characters/{character_id}/assets/", {"page": 1}
+            )
+            journal_ttl = ttl(
+                "GET", f"/characters/{character_id}/wallet/journal/", {"page": 1}
+            )
+            transactions_ttl = ttl(
+                "GET", f"/characters/{character_id}/wallet/transactions/", None
+            )
+            wallet_candidates = [
+                value for value in (journal_ttl, transactions_ttl) if value is not None
+            ]
+            timers["wallet"] = max(wallet_candidates) if wallet_candidates else None
+            timers["market_orders"] = ttl(
+                "GET", f"/characters/{character_id}/orders/", None
+            )
+            timers["contracts"] = ttl(
+                "GET", f"/characters/{character_id}/contracts/", {"page": 1}
+            )
+            timers["industry_jobs"] = ttl(
+                "GET", f"/characters/{character_id}/industry/jobs/", {}
+            )
+        except Exception:
+            logger.debug(
+                "Failed to compute endpoint timers for character %s",
+                character_id,
+                exc_info=True,
+            )
+
+        return timers
+
+    def _publish_endpoint_timers(self, character_id: int) -> dict[str, float | None]:
+        """Compute and broadcast endpoint timers for a character."""
+        timers = self._get_endpoint_timers(character_id)
+        try:
+            self._signal_bus.endpoint_timers_updated.emit(character_id, timers)
+        except Exception:
+            logger.debug("Failed to emit endpoint timers", exc_info=True)
+
+        # Also update the character widget in-place if it exists
+        try:
+            widget = self._find_character_widget(character_id)
+            if widget is not None:
+                widget.set_endpoint_timers(timers)
+        except Exception:
+            logger.debug("Failed to set endpoint timers on widget", exc_info=True)
+
+        return timers
+
+    async def _create_character_widget(self, character):
+        """Create and populate a character widget."""
         char_widget = CharacterItemWidget(character)
-        item.setSizeHint(char_widget.sizeHint())
-        self.list_widget.addItem(item)
-        self.list_widget.setItemWidget(item, char_widget)
+        # Connect refresh signal
+        char_widget.refresh_requested.connect(self._on_refresh_character)
+        # Apply initial view mode
+        char_widget.set_view_mode(
+            "list" if self.listview_checkbox.isChecked() else "card"
+        )
+        # Apply initial networth visibility
+        char_widget.set_networth_visible(True)  # Always show networth
+        # Refresh sizes from settings
+        try:
+            char_widget.refresh_sizes()
+        except Exception:
+            pass
+
+        # Load images and networth asynchronously
         task = asyncio.create_task(self._load_images(character, char_widget))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+        if self._networth_service is not None:
+            task2 = asyncio.create_task(self._load_networth(character, char_widget))
+            self._background_tasks.add(task2)
+            task2.add_done_callback(self._background_tasks.discard)
+
+        return char_widget
 
     async def _load_images(self, character, widget):
         portrait_sizes = [1024, 512, 256, 128, 64, 32]
@@ -305,38 +1229,251 @@ class CharactersTab(QWidget):
                     character.alliance_id,
                 )
 
+    async def _load_networth(self, character, widget):
+        try:
+            latest = (
+                await self._networth_service.get_latest_networth(character.character_id)
+                if self._networth_service is not None
+                else None
+            )
+            widget.set_networth(latest)
+            # Store snapshot reference for list view access
+            widget._networth_snapshot = latest
+            # Don't publish endpoint timers here - they're only available after
+            # endpoints have been actually fetched (when user refreshes character).
+            # Endpoint timers will be populated after _refresh_character_endpoints_parallel_batch()
+            # Apply networth visibility based on checkbox
+            widget.set_networth_visible(True)  # Always show networth
+            try:
+                widget.updateGeometry()
+                parent_card = widget.parentWidget()
+                if parent_card is not None:
+                    parent_card.updateGeometry()
+                    container = parent_card.parentWidget()
+                    if container is not None and hasattr(container, "updateGeometry"):
+                        container.updateGeometry()
+            except Exception:
+                logger.debug(
+                    "Failed to propagate geometry updates for character %s",
+                    character.character_id,
+                    exc_info=True,
+                )
+            self._request_account_relayout()
+        except Exception:
+            logger.debug(
+                "Failed to load latest networth for %s",
+                character.character_id,
+                exc_info=True,
+            )
+
+    def _on_timers_toggle(self, state: int) -> None:
+        """Show/hide endpoint timers across character cards."""
+        visible = state != 0
+        try:
+            if self.listview_checkbox.isChecked():
+                visible = False
+            for group in self.account_groups.values():
+                for card in getattr(group, "character_cards", []):
+                    try:
+                        # Toggle endpoint timer visibility in the widget
+                        if hasattr(card.character_widget, "set_timers_visible"):
+                            card.character_widget.set_timers_visible(visible)
+                        # Update card size constraints to account for timer visibility change
+                        if hasattr(card, "update_size_constraints"):
+                            card.update_size_constraints()
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception("Failed to toggle timers visibility")
+
+    def _on_listview_toggle(self, state: int) -> None:
+        """Switch between card and list views, and update UI accordingly."""
+        is_list = state != 0
+        try:
+            if is_list:
+                # Remember timers checkbox state and disable it
+                self._timers_checkbox_prev_state = self.timers_checkbox.isChecked()
+                self.timers_checkbox.setEnabled(False)
+                self.timers_checkbox.setChecked(False)
+                # Hide card view, show list view
+                self.scroll_area.hide()
+                self.list_table.show()
+                self._populate_list_table()
+            else:
+                # Restore timers checkbox state and enable it
+                self.timers_checkbox.setEnabled(True)
+                self.timers_checkbox.setChecked(self._timers_checkbox_prev_state)
+                # Hide list view, show card view
+                self.list_table.hide()
+                self.scroll_area.show()
+            # Update all widgets' view mode
+            for group in self.account_groups.values():
+                for card in getattr(group, "character_cards", []):
+                    try:
+                        card.character_widget.set_view_mode(
+                            "list" if is_list else "card"
+                        )
+                        # Always show networth in card mode
+                        card.character_widget.set_networth_visible(not is_list)
+                        card.character_widget.refresh_sizes()
+                        # Update card size constraints after view mode change
+                        if hasattr(card, "update_size_constraints"):
+                            card.update_size_constraints()
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception("Failed to toggle list view")
+
+    def _populate_list_table(self):
+        """Populate the QTableWidget with all characters as rows."""
+        try:
+            # Helper function for ISK formatting
+            def safe_fmt(val):
+                try:
+                    x = float(val or 0.0)
+                    if x >= 1_000_000_000:
+                        return f"{x / 1_000_000_000:.2f}b"
+                    if x >= 1_000_000:
+                        return f"{x / 1_000_000:.2f}m"
+                    if x >= 1_000:
+                        return f"{x / 1_000:.2f}k"
+                    return f"{x:.0f}"
+                except Exception:
+                    return "0"
+
+            # Flatten all characters from all account groups
+            all_chars = []
+            for group in self.account_groups.values():
+                for card in getattr(group, "character_cards", []):
+                    widget = getattr(card, "character_widget", None)
+                    if widget is not None:
+                        ch = getattr(widget, "character", None)
+                        if ch is not None:
+                            all_chars.append((ch, widget))
+
+            # Map character to account (name) using settings
+            accounts = self._settings.get_accounts()
+            char_to_acc: dict[int, int] = {}
+            account_names: dict[int, str] = {}
+            for acc_id, acc_data in accounts.items():
+                try:
+                    account_names[int(acc_id)] = (
+                        acc_data.get("name") or f"Account {acc_id}"
+                    )
+                    for cid in acc_data.get("characters", []):
+                        char_to_acc[int(cid)] = int(acc_id)
+                except Exception:
+                    continue
+
+            self.list_table.setRowCount(len(all_chars))
+
+            for row, (ch, widget) in enumerate(all_chars):
+                # Name, Account, Corp, Alliance
+                name = str(getattr(ch, "character_name", ""))
+                account_id = char_to_acc.get(getattr(ch, "character_id", 0))
+                account_name = (
+                    account_names.get(account_id, "Unassigned")
+                    if account_id is not None
+                    else "Unassigned"
+                )
+                corp = str(getattr(ch, "corporation_name", ""))
+                alliance = str(getattr(ch, "alliance_name", ""))
+
+                # Try to get networth snapshot from widget (if loaded)
+                snap = getattr(widget, "_networth_snapshot", None)
+                wallet = assets = escrow = sell = contracts = collat = industry = (
+                    networth_total
+                ) = "-"
+
+                if snap is not None:
+                    wallet = safe_fmt(getattr(snap, "wallet_balance", 0))
+                    assets = safe_fmt(getattr(snap, "total_asset_value", 0))
+                    escrow = safe_fmt(getattr(snap, "market_escrow", 0))
+                    sell = safe_fmt(getattr(snap, "market_sell_value", 0))
+                    contracts = safe_fmt(getattr(snap, "contract_value", 0))
+                    collat = safe_fmt(getattr(snap, "contract_collateral", 0))
+                    industry = safe_fmt(getattr(snap, "industry_job_value", 0))
+                    try:
+                        total_val = getattr(snap, "total_net_worth", None)
+                        if total_val is None:
+                            total_val = (
+                                float(getattr(snap, "wallet_balance", 0) or 0)
+                                + float(getattr(snap, "market_escrow", 0) or 0)
+                                + float(getattr(snap, "market_sell_value", 0) or 0)
+                                + float(getattr(snap, "contract_collateral", 0) or 0)
+                                + float(getattr(snap, "contract_value", 0) or 0)
+                                + float(getattr(snap, "total_asset_value", 0) or 0)
+                                + float(getattr(snap, "industry_job_value", 0) or 0)
+                                + float(getattr(snap, "plex_vault", 0) or 0)
+                            )
+                        networth_total = safe_fmt(total_val)
+                    except Exception:
+                        networth_total = "-"
+
+                # Fill table with proper alignment
+                values = [
+                    name,
+                    account_name,
+                    corp,
+                    alliance,
+                    wallet,
+                    assets,
+                    escrow,
+                    sell,
+                    contracts,
+                    collat,
+                    industry,
+                    networth_total,
+                ]
+                for col, val in enumerate(values):
+                    item = QTableWidgetItem(str(val))
+                    item.setToolTip(str(val))
+                    # Right-align numeric columns
+                    if col >= 4:
+                        item.setTextAlignment(
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                        )
+                    self.list_table.setItem(row, col, item)
+
+            logger.info(f"Populated list table with {len(all_chars)} characters")
+        except Exception:
+            logger.exception("Failed to populate list table")
+
     @pyqtSlot(dict)
     def _on_character_added(self, character_data):
+        """Handle character added signal - trigger full refresh."""
         try:
+            # Add to cached list and refresh UI
             character = CharacterInfo(**character_data)
-            task = asyncio.create_task(self._add_character(character))
+            self._last_loaded_characters.append(character)
+            task = asyncio.create_task(
+                self._populate_characters(self._last_loaded_characters)
+            )
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
         except Exception:
-            logger.exception("Failed to add character to list")
+            logger.exception("Failed to add character")
 
     @pyqtSlot(int)
     def _on_character_removed(self, character_id):
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            if item and item.data(Qt.ItemDataRole.UserRole) == character_id:
-                self.list_widget.takeItem(i)
-                break
+        """Handle character removed signal - trigger full refresh."""
+        try:
+            # Remove from cached list and refresh UI
+            self._last_loaded_characters = [
+                ch
+                for ch in self._last_loaded_characters
+                if getattr(ch, "character_id", 0) != character_id
+            ]
+            task = asyncio.create_task(
+                self._populate_characters(self._last_loaded_characters)
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+        except Exception:
+            logger.exception("Failed to remove character")
 
-    @pyqtSlot(QListWidgetItem)
-    def _on_item_clicked(self, item):
-        character_id = item.data(Qt.ItemDataRole.UserRole)
-        if character_id:
-            self._signal_bus.character_selected.emit(character_id)
-
-    @pyqtSlot()
-    def _show_context_menu(self, position):
-        item = self.list_widget.itemAt(position)
-        if not item:
-            return
-        character_id = item.data(Qt.ItemDataRole.UserRole)
-        if not character_id:
-            return
+    def _show_context_menu(self, character_id: int, position):
+        """Show context menu for character."""
         menu = QMenu(self)
         remove_action = QAction("Remove Character", self)
         remove_action.triggered.connect(
@@ -350,9 +1487,108 @@ class CharactersTab(QWidget):
             )
         )
         menu.addAction(reauth_action)
-        menu.exec(self.list_widget.mapToGlobal(position))
+        # Manage accounts / PLEX vault
+        from ui.dialogs.account_manager_dialog import AccountManagerDialog
+
+        manage_accounts_action = QAction("Manage Accounts / PLEX Vault", self)
+
+        def _open_accounts_dialog():
+            # Build character names from loaded characters
+            names: dict[int, str] = {}
+            try:
+                for ch in self._last_loaded_characters:
+                    cid = getattr(ch, "character_id", 0)
+                    name = getattr(ch, "character_name", str(cid))
+                    names[int(cid)] = str(name)
+            except Exception:
+                pass
+            AccountManagerDialog(
+                self, character_id=character_id, character_names=names
+            ).exec()
+
+        manage_accounts_action.triggered.connect(_open_accounts_dialog)
+        menu.addAction(manage_accounts_action)
+        menu.exec(position)
+
+    def _on_new_account_clicked(self) -> None:
+        """Open the account manager dialog to create a new account."""
+        from ui.dialogs.account_manager_dialog import AccountManagerDialog
+
+        # Build id->name mapping from loaded characters
+        names: dict[int, str] = {}
+        try:
+            for ch in self._last_loaded_characters:
+                cid = getattr(ch, "character_id", 0)
+                name = getattr(ch, "character_name", str(cid))
+                names[int(cid)] = str(name)
+        except Exception:
+            pass
+
+        dlg = AccountManagerDialog(self, character_id=None, character_names=names)
+        dlg.exec()
+
+    def _on_character_dropped(self, character_id: int, target_account_id):
+        """Handle character drop onto account group."""
+        self._handle_reassign(character_id, target_account_id)
+        # Refresh UI
+        task = asyncio.create_task(self._refresh_after_reassign())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _on_character_clicked(self, character_id: int):
+        """Handle character click for selection."""
+        self._signal_bus.character_selected.emit(character_id)
+
+    def _handle_reassign(self, char_id: int, target_acc_id):
+        """Reassign a character to the target account (or unassign if None)."""
+        try:
+            prev_acc = self._settings.get_account_for_character(int(char_id))
+            if target_acc_id is None:
+                if prev_acc is not None:
+                    self._settings.unassign_character_from_account(
+                        int(char_id), int(prev_acc)
+                    )
+                    self._signal_bus.status_message.emit(
+                        f"Unassigned character {char_id} from account {prev_acc}"
+                    )
+                return
+            ok = self._settings.assign_character_to_account(
+                int(char_id), int(target_acc_id)
+            )
+            if not ok:
+                self._signal_bus.error_occurred.emit(
+                    "Account limit reached (max 3 characters)."
+                )
+                return
+            if prev_acc is not None and int(prev_acc) != int(target_acc_id):
+                self._settings.unassign_character_from_account(
+                    int(char_id), int(prev_acc)
+                )
+            self._signal_bus.status_message.emit(
+                f"Assigned character {char_id} to account {target_acc_id}"
+            )
+        except Exception:
+            logger.exception("Failed to reassign character")
+
+    async def _refresh_after_reassign(self):
+        try:
+            await self._populate_characters(self._last_loaded_characters)
+        except Exception:
+            logger.exception("Failed to refresh UI after reassignment")
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802  # type: ignore[override]
+        if obj is self.accounts_container and event.type() == QEvent.Type.Resize:
+            self.accounts_layout.update()
+        return super().eventFilter(obj, event)
 
     @asyncSlot()
+    def _on_add_character_clicked(self) -> None:
+        """Handle Add Character button click."""
+        from ui.dialogs.auth_dialog import AuthDialog
+
+        dialog = AuthDialog(self._character_service, self)
+        dialog.exec()
+
     async def _remove_character(self, character_id):
         try:
             success = await self._character_service.remove_character(character_id)
@@ -375,17 +1611,6 @@ class CharactersTab(QWidget):
             character_id: Selected character ID
         """
         self._selected_character_id = character_id
-        self.update_button.setEnabled(True)
-        self._show_placeholder(False)
-        self._update_endpoint_timers()
-
-    @pyqtSlot()
-    def _on_refresh_timers(self) -> None:
-        """Refresh the endpoint timers display."""
-        if self._selected_character_id is not None:
-            self._update_endpoint_timers()
-        else:
-            self._signal_bus.info_message.emit("Please select a character first")
 
     def _load_rate_limits(self, character_id: int) -> dict:
         """Load rate limit info for the selected character from rate_limits.json."""
@@ -410,97 +1635,15 @@ class CharactersTab(QWidget):
                 result[name] = group
         return result
 
-    def _update_endpoint_timers(self) -> None:
-        """Update endpoint timer displays based on cache status and rate limits."""
-        if self._selected_character_id is None:
-            self._show_placeholder(True)
-            return
-
-        try:
-            character_id = self._selected_character_id
-            endpoints = {
-                "Assets": f"/characters/{character_id}/assets/",
-                "Wallet Journal": f"/characters/{character_id}/wallet/journal/",
-                "Wallet Transactions": f"/characters/{character_id}/wallet/transactions/",
-                "Market Orders": f"/characters/{character_id}/orders/",
-                "Contracts": f"/characters/{character_id}/contracts/",
-                "Industry Jobs": f"/characters/{character_id}/industry/jobs/",
-            }
-
-            for name, path in endpoints.items():
-                timer = self.endpoint_timers.get(name)
-                # Use params={"page": 1} for paginated endpoints to match cache key
-                paginated = name in {"Assets", "Wallet Journal", "Contracts"}
-                params = {"page": 1} if paginated else None
-                ttl = self._esi_client.cache.time_to_expiry("GET", path, params=params)
-
-                if ttl is None:
-                    cached = self._esi_client.cache.get("GET", path, params=params)
-                    if cached is None:
-                        resolved_ttl = None
-                    else:
-                        resolved_ttl = None
-                else:
-                    resolved_ttl = ttl
-
-                if timer is not None:
-                    timer.set_expiry(resolved_ttl)
-
-        except Exception:
-            logger.exception("Failed to update endpoint timers")
-
     @asyncSlot()
     async def _on_update_all(self) -> None:
-        """Update all endpoints for selected character."""
+        """Update all endpoints for selected character using parallel updates."""
         if self._selected_character_id is None:
             self._signal_bus.info_message.emit("Please select a character first")
             return
 
-        character_id = self._selected_character_id
-
-        try:
-            # Show progress
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setMaximum(6)
-            self.progress_bar.setValue(0)
-            self.update_button.setEnabled(False)
-
-            self._signal_bus.status_message.emit(
-                f"Updating all endpoints for character {character_id}..."
-            )
-
-            # Update each endpoint
-            updates = [
-                ("assets", self._update_assets),
-                ("wallet journal", self._update_wallet_journal),
-                ("wallet transactions", self._update_wallet_transactions),
-                ("market orders", self._update_market_orders),
-                ("contracts", self._update_contracts),
-                ("industry jobs", self._update_industry_jobs),
-            ]
-
-            for i, (name, update_func) in enumerate(updates, 1):
-                try:
-                    self._signal_bus.status_message.emit(f"Updating {name}...")
-                    await update_func(character_id)
-                    self.progress_bar.setValue(i)
-                except Exception:
-                    logger.exception(f"Failed to update {name}")
-                    self._signal_bus.error_occurred.emit(
-                        f"Failed to update {name}. Check logs for details."
-                    )
-
-            self._signal_bus.status_message.emit("All endpoints updated successfully!")
-
-            # Refresh timers to show new cache status
-            self._update_endpoint_timers()
-
-        except Exception:
-            logger.exception("Failed to update endpoints")
-            self._signal_bus.error_occurred.emit("Failed to update endpoints")
-        finally:
-            self.progress_bar.setVisible(False)
-            self.update_button.setEnabled(True)
+        # Delegate to the parallel refresh implementation
+        await self._on_refresh_character(self._selected_character_id)
 
     async def _update_assets(self, character_id: int) -> None:
         """Update assets for character.
@@ -508,11 +1651,39 @@ class CharactersTab(QWidget):
         Args:
             character_id: Character ID
         """
-        # Fetch data from ESI, respecting stale cache (like market orders)
-        assets = await self._esi_client.assets.get_assets(
+        # Fetch data from ESI
+        result = await self._esi_client.assets.get_assets(
             character_id, use_cache=True, bypass_cache=False
         )
-        logger.info(f"Fetched {len(assets)} assets for character {character_id}")
+        # Normalize possible (list, headers) response
+        if isinstance(result, tuple):
+            assets_list, _headers = result
+        else:
+            assets_list = result
+        try:
+            # Persist to current_assets (do not snapshot here)
+            from data.repositories import (
+                assets as assets_repo,  # local import to avoid cycles
+            )
+
+            # Access repository via asset service
+            repo = getattr(self._asset_service, "_repo", None)
+            if repo is not None:
+                await assets_repo.update_current_assets(repo, character_id, assets_list)
+                await repo.commit()  # Ensure changes are persisted
+                logger.info(
+                    "Updated current_assets for character %d with %d assets",
+                    character_id,
+                    len(assets_list),
+                )
+            else:
+                logger.warning(
+                    "Repository not available on asset service; skipping DB update for assets"
+                )
+        except Exception:
+            logger.exception(
+                "Failed to update current_assets for character %d", character_id
+            )
 
     async def _update_wallet_journal(self, character_id: int) -> None:
         """Update wallet journal for character.
