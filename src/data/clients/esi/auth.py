@@ -17,6 +17,7 @@ import tempfile
 import webbrowser
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -543,3 +544,97 @@ class ESIAuth:
             logger.info("Removed token for character %s", character_id)
             return True
         return False
+
+    def is_token_expired_and_unrefreshable(self, character_id: int | str) -> bool:
+        """Check if a character's token is expired and cannot be auto-refreshed.
+
+        Args:
+            character_id: Character ID to check
+
+        Returns:
+            True if token is expired and has no refresh token, False otherwise
+        """
+        character_id = str(character_id)
+        token_info = self._tokens.get(character_id)
+
+        if not token_info:
+            # No token at all
+            return True
+
+        # Check if access token is expired
+        expires_raw = token_info.get("expires_at")
+        if not expires_raw:
+            # No expiry info - assume expired
+            return True
+
+        try:
+            expires_at = datetime.fromisoformat(expires_raw)
+            now = datetime.now(UTC)
+            is_expired = now >= expires_at
+        except (ValueError, TypeError):
+            # Invalid expiry format - assume expired
+            is_expired = True
+
+        # Check if we can refresh it
+        has_refresh_token = bool(token_info.get("refresh_token"))
+
+        # It's unrefreshable if it's expired AND we don't have a refresh token
+        return is_expired and not has_refresh_token
+
+    def get_token_status(self, character_id: int | str) -> dict[str, Any]:
+        """Get detailed token status for a character.
+
+        Args:
+            character_id: Character ID to check
+
+        Returns:
+            Dictionary with keys: 'has_token', 'is_expired', 'can_refresh',
+            'expires_at', 'time_until_expiry'
+        """
+        character_id = str(character_id)
+        token_info = self._tokens.get(character_id)
+
+        if not token_info:
+            return {
+                "has_token": False,
+                "is_expired": True,
+                "can_refresh": False,
+                "expires_at": None,
+                "time_until_expiry": None,
+            }
+
+        expires_raw = token_info.get("expires_at")
+        has_refresh_token = bool(token_info.get("refresh_token"))
+
+        if not expires_raw:
+            return {
+                "has_token": True,
+                "is_expired": True,
+                "can_refresh": has_refresh_token,
+                "expires_at": None,
+                "time_until_expiry": None,
+            }
+
+        try:
+            expires_at = datetime.fromisoformat(expires_raw)
+            now = datetime.now(UTC)
+            is_expired = now >= expires_at
+            time_until_expiry = (
+                (expires_at - now).total_seconds() if not is_expired else 0.0
+            )
+        except (ValueError, TypeError):
+            return {
+                "has_token": True,
+                "is_expired": True,
+                "can_refresh": has_refresh_token,
+                "expires_at": expires_raw,
+                "time_until_expiry": None,
+            }
+
+        return {
+            "has_token": True,
+            "is_expired": is_expired,
+            "can_refresh": has_refresh_token,
+            "expires_at": expires_at.isoformat(),
+            "time_until_expiry": time_until_expiry,
+        }

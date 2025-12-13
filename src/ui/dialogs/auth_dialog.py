@@ -141,7 +141,37 @@ class AuthDialog(QDialog):
             # Authenticate character
             character_info = await self._service.authenticate_character(selected_scopes)
 
-            # Success
+            # Check for duplicate character BEFORE emitting signals
+            existing_characters = await self._service.get_authenticated_characters(
+                use_cache_only=True
+            )
+            duplicate = any(
+                char.character_id == character_info.character_id
+                for char in existing_characters
+            )
+
+            if duplicate:
+                # Show inline warning for duplicate character - DO NOT ADD
+                self.status_label.setStyleSheet("color: #FFA500; font-weight: bold;")
+                self.status_label.setText(
+                    f"⚠ Character '{character_info.character_name}' is already added.\n"
+                    f"The existing character's token has been updated. No duplicate created."
+                )
+                logger.warning(
+                    "Duplicate character detected and blocked: %s (ID: %d)",
+                    character_info.character_name,
+                    character_info.character_id,
+                )
+                # Emit auth_completed to update token, but NOT character_added
+                self._signal_bus.auth_completed.emit(character_info.model_dump())
+
+                # Wait longer to show warning message
+                await asyncio.sleep(3)
+                self.accept()
+                return
+
+            # Success - new character
+            self.status_label.setStyleSheet("")
             self.status_label.setText(
                 f"Successfully authenticated as {character_info.character_name}"
             )
@@ -154,11 +184,13 @@ class AuthDialog(QDialog):
             self.accept()
 
         except TimeoutError:
+            self.status_label.setStyleSheet("")
             self.status_label.setText("Authentication timeout - please try again")
             self._signal_bus.auth_failed.emit("Authentication timeout")
             logger.warning("Authentication timeout")
         except ValueError as e:
             error_msg = str(e)
+            self.status_label.setStyleSheet("")
             if "State mismatch" in error_msg:
                 self.status_label.setText(
                     "Authentication failed: Security error (state mismatch)"
@@ -175,6 +207,7 @@ class AuthDialog(QDialog):
             logger.error("Authentication failed: %s", error_msg)
         except Exception as e:
             error_msg = f"Authentication error: {e}"
+            self.status_label.setStyleSheet("")
             self.status_label.setText(error_msg)
             self._signal_bus.auth_failed.emit(str(e))
             logger.exception("Authentication error")
