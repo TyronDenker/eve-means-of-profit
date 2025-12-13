@@ -277,6 +277,12 @@ class NetWorthService:
                     if plex_price and plex_price > 0:
                         plex_vault = units * plex_price
                         self._last_used_prices[44992] = (plex_price, "market")
+                    else:
+                        # PLEX price unavailable - log warning but continue
+                        logger.warning(
+                            f"PLEX market price unavailable for character {character_id}, "
+                            f"vault value will be 0 (units: {units})"
+                        )
         except Exception:
             logger.debug("Account PLEX valuation failed", exc_info=True)
 
