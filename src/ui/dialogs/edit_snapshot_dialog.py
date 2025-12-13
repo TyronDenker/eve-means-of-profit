@@ -93,12 +93,41 @@ class EditSnapshotDialog(QDialog):
             self.snapshot.character_id, str(self.snapshot.character_id)
         )
 
-        # Info label
-        info_label = QLabel(
-            f"Original Character: {char_display}\n"
-            f"Date: {self.snapshot.snapshot_time.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        # Context info section with detailed timing and source information
+        context_lines = [
+            f"<b>Character:</b> {char_display}",
+            f"<b>Snapshot Time:</b> {self.snapshot.snapshot_time.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        ]
+
+        # Add snapshot group info if available
+        if self.snapshot.snapshot_group_id:
+            context_lines.append(
+                f"<b>Snapshot Group ID:</b> {self.snapshot.snapshot_group_id}"
+            )
+
+        # Add account info if available
+        if self.snapshot.account_id:
+            context_lines.append(f"<b>Account ID:</b> {self.snapshot.account_id}")
+
+        # Determine snapshot source based on group and account info
+        source = "Unknown"
+        if self.snapshot.snapshot_group_id:
+            if self.snapshot.account_id is None:
+                source = "Refresh All (grouped)"
+            else:
+                source = f"Refresh Account {self.snapshot.account_id} (grouped)"
+        else:
+            if self.snapshot.account_id:
+                source = f"Character (Account {self.snapshot.account_id})"
+            else:
+                source = "Character (standalone)"
+
+        context_lines.append(f"<b>Source:</b> {source}")
+
+        # Build the info label with all context
+        info_label = QLabel("<br>".join(context_lines))
         info_label.setStyleSheet(AppStyles.LABEL_INFO)
+        info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
         # Form for editing values

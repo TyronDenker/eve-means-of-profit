@@ -157,18 +157,51 @@ class NetworthTab(QWidget):
             self._plot_widget.showGrid(x=True, y=True, alpha=0.3)
         graph_layout.addWidget(self._plot_widget, stretch=1)
 
-        self._hover_label = QLabel("")
-        self._hover_label.setStyleSheet(
-            f"color: {COLORS.TEXT_MUTED}; font-style: italic;"
-        )
-        graph_layout.addWidget(self._hover_label)
+        # Summary bar container - always visible with modern styling
+        self._summary_bar = QFrame()
+        self._summary_bar.setFrameShape(QFrame.Shape.StyledPanel)
+        self._summary_bar.setStyleSheet(f"""
+            QFrame {{
+            background-color: {COLORS.BG_LIGHT};
+            border: 1px solid {COLORS.BORDER_LIGHT};
+            border-radius: 6px;
+            padding: 8px;
+            }}
+        """)
+        summary_layout = QVBoxLayout(self._summary_bar)
+        summary_layout.setContentsMargins(12, 8, 12, 8)
+        summary_layout.setSpacing(8)
 
+        # Delta label for period changes - stacked vertically
         self._delta_label = QLabel("")
-        self._delta_label.setStyleSheet(f"color: {COLORS.TEXT_MUTED};")
-        self._delta_label.setTextFormat(
-            Qt.TextFormat.RichText
-        )  # Enable HTML for colored symbols
-        graph_layout.addWidget(self._delta_label)
+        self._delta_label.setStyleSheet(f"""
+            QLabel {{
+            color: {COLORS.TEXT_SECONDARY};
+            font-size: 12px;
+            font-weight: normal;
+            }}
+        """)
+        self._delta_label.setTextFormat(Qt.TextFormat.RichText)
+        self._delta_label.setWordWrap(True)
+        summary_layout.addWidget(self._delta_label, stretch=0)
+
+        # Hover label for point details - right side
+        self._hover_label = QLabel("Hover over graph for details")
+        self._hover_label.setStyleSheet(f"""
+            QLabel {{
+                color: {COLORS.TEXT_MUTED};
+                font-size: 11px;
+                font-weight: normal;
+            }}
+        """)
+        self._hover_label.setTextFormat(Qt.TextFormat.RichText)
+        self._hover_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._hover_label.setMinimumWidth(200)
+        summary_layout.addWidget(self._hover_label, stretch=0)
+
+        graph_layout.addWidget(self._summary_bar)
 
         splitter.addWidget(graph_container)
 
@@ -638,7 +671,7 @@ class NetworthTab(QWidget):
 
             # Clear existing plot and legend to prevent duplicates
             self._plot_widget.clear()
-            self._hover_label.setText("")
+            self._hover_label.setText("Hover over graph for details")
 
             # Clear the legend items if it exists
             plot_item = self._plot_widget.getPlotItem()
@@ -773,6 +806,22 @@ class NetworthTab(QWidget):
                 self._last_plot_cache["series"]["Total"] = total_values
 
             self._update_delta_label()
+
+            # Ensure hover line is re-added to the plot after clearing
+            if hasattr(self, "_hover_line"):
+                try:
+                    self._plot_widget.addItem(self._hover_line)
+                except Exception:
+                    # If it fails (e.g., already added), recreate it
+                    self._hover_line = pg.InfiniteLine(
+                        angle=90,
+                        movable=False,
+                        pen=pg.mkPen(
+                            color="#FFD700", width=1.5, style=Qt.PenStyle.DashLine
+                        ),
+                    )
+                    self._plot_widget.addItem(self._hover_line)
+                    self._hover_line.hide()
 
         except Exception:
             logger.exception("Failed to plot net worth data")
@@ -983,6 +1032,10 @@ class NetworthTab(QWidget):
     def _on_plot_hover(self, evt):
         try:
             if not self._last_plot_cache:
+                # Hide hover indicator when no data
+                if hasattr(self, "_hover_line"):
+                    self._hover_line.hide()
+                self._hover_label.setText("Hover over graph for details")
                 return
             pos = evt[0] if isinstance(evt, (list, tuple)) else evt
             if pos is None:
@@ -1000,21 +1053,61 @@ class NetworthTab(QWidget):
                 return
             # Find nearest timestamp index
             idx = min(range(len(timestamps)), key=lambda i: abs(timestamps[i] - x_val))
-            ts = datetime.fromtimestamp(timestamps[idx])
-            pieces = [ts.strftime("%Y-%m-%d %H:%M")]
+            ts = datetime.fromtimestamp(timestamps[idx], tz=UTC)
+
+            # Show vertical crosshair line at nearest data point for visual feedback
+            if not hasattr(self, "_hover_line"):
+                self._hover_line = pg.InfiniteLine(
+                    angle=90,
+                    movable=False,
+                    pen=pg.mkPen(
+                        color="#FFD700", width=1.5, style=Qt.PenStyle.DashLine
+                    ),
+                )
+                self._plot_widget.addItem(self._hover_line)
+            self._hover_line.setPos(timestamps[idx])
+            self._hover_line.show()
+
+            # Build compact horizontal tooltip with color-coded values
+            date_str = ts.strftime("%b %d, %H:%M")
+            value_parts = []
             for label, values in self._last_plot_cache.get("series", {}).items():
                 if idx < len(values):
-                    pieces.append(f"{label}: {values[idx]:,.0f} ISK")
-            self._hover_label.setText(" | ".join(pieces))
+                    color = self.COLOR_MAP.get(label, "#FFFFFF")
+                    symbol = GraphStyles.format_series_indicator(label)
+                    value_str = format_isk_short(values[idx])
+                    value_parts.append(
+                        f"{symbol} <span style='color:{color}'><b>{label}:</b> {value_str}</span>"
+                    )
+            # Join with separator for horizontal layout
+            self._hover_label.setText(
+                f"<b>{date_str}</b> &nbsp;— "
+                + " &nbsp;| ".join(value_parts[:4])
+                + (" ..." if len(value_parts) > 4 else "")
+            )
         except Exception:
             logger.debug("Hover tooltip failed", exc_info=True)
 
     def _update_delta_label(self) -> None:
         """Show per-series delta (first → last) with colored symbol indicators."""
         series = self._last_plot_cache.get("series", {})
-        if not series:
-            self._delta_label.setText("")
+        timestamps = self._last_plot_cache.get("timestamps", [])
+
+        if not series or not timestamps:
+            self._delta_label.setText(
+                f"<span style='color:{COLORS.TEXT_MUTED}'>No data for selected period</span>"
+            )
             return
+
+        # Build date range header
+        try:
+            start_date = datetime.fromtimestamp(timestamps[0], tz=UTC).strftime("%b %d")
+            end_date = datetime.fromtimestamp(timestamps[-1], tz=UTC).strftime(
+                "%b %d, %Y"
+            )
+            date_range = f"<b>Period:</b> {start_date} → {end_date}"
+        except (ValueError, IndexError):
+            date_range = ""
 
         parts: list[str] = []
         for label, values in series.items():
@@ -1025,15 +1118,34 @@ class NetworthTab(QWidget):
             delta = end - start
             pct = (delta / start * 100) if start else None
             delta_txt = format_isk_short(delta, signed=True)
-            # Use GraphStyles colored symbol indicator instead of emoji
+
+            # Color delta value based on positive/negative
+            delta_color = COLORS.SUCCESS if delta >= 0 else COLORS.ERROR
+
+            # Use GraphStyles colored symbol indicator (non-italic, standard font)
             symbol_html = GraphStyles.format_series_indicator(label)
             if pct is None:
-                parts.append(f"{symbol_html} {label}: {delta_txt}")
+                parts.append(
+                    f"{symbol_html} <b>{label}:</b> "
+                    f"<span style='color:{delta_color}'>{delta_txt}</span>"
+                )
             else:
-                parts.append(f"{symbol_html} {label}: {delta_txt} ({pct:+.1f}%)")
+                parts.append(
+                    f"{symbol_html} <b>{label}:</b> "
+                    f"<span style='color:{delta_color}'>{delta_txt} ({pct:+.1f}%)</span>"
+                )
 
-        # Use rich text format for the delta label
-        self._delta_label.setText("Δ " + " | ".join(parts))
+        # Combine date range and deltas in a horizontal-friendly format
+        if date_range and parts:
+            self._delta_label.setText(
+                f"{date_range} &nbsp;|&nbsp; " + " &nbsp;|&nbsp; ".join(parts)
+            )
+        elif parts:
+            self._delta_label.setText(" &nbsp;|&nbsp; ".join(parts))
+        else:
+            self._delta_label.setText(
+                f"<span style='color:{COLORS.TEXT_MUTED}'>Insufficient data for delta calculation</span>"
+            )
 
     @staticmethod
     def _configure_date_edit(edit: QDateEdit) -> None:
