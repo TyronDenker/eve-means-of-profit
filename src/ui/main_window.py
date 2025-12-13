@@ -22,6 +22,7 @@ from data import FuzzworkProvider
 from data.clients import FuzzworkClient
 from data.parsers.fuzzwork_csv import FuzzworkCSVParser
 from services.networth_service import NetWorthService
+from ui.dialogs import PreferencesDialog
 from ui.dialogs.auth_dialog import AuthDialog
 from ui.signal_bus import get_signal_bus
 from ui.tabs import AssetsTab, CharactersTab, NetworthTab
@@ -340,6 +341,14 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        # Add Preferences menu item
+        preferences_action = QAction("&Preferences...", self)
+        preferences_action.setShortcut("Ctrl+,")
+        preferences_action.triggered.connect(self._on_preferences)
+        file_menu.addAction(preferences_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
@@ -380,6 +389,12 @@ class MainWindow(QMainWindow):
         self._signal_bus.info_message.emit(
             "Please right-click a character in the list to remove them"
         )
+
+    def _on_preferences(self) -> None:
+        """Show preferences dialog."""
+        dialog = PreferencesDialog(self._settings, self)
+        dialog.exec()
+        logger.info("Preferences dialog closed")
 
     def _on_about(self) -> None:
         """Show about dialog."""

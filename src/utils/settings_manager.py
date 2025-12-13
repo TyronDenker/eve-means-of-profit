@@ -88,6 +88,40 @@ class UISettings(BaseModel):
     )
 
 
+class MarketValuePreferences(BaseModel):
+    """Preferences for market value calculations."""
+
+    source_station: str = Field(
+        default="jita",
+        description="Market station for prices: 'jita', 'amarr', 'dodixie', 'rens', 'hek'",
+    )
+    price_type: str = Field(
+        default="sell",
+        description="Price type to use: 'buy', 'sell', 'weighted'",
+    )
+    weighted_buy_ratio: float = Field(
+        default=0.3,
+        description="Weight for buy price in weighted calculation (0.0-1.0)",
+    )
+
+
+class LoggingPreferences(BaseModel):
+    """Preferences for application logging."""
+
+    save_to_file: bool = Field(
+        default=True,
+        description="Whether to save logs to files",
+    )
+    retention_count: int = Field(
+        default=7,
+        description="Number of log files to retain (older files are deleted)",
+    )
+    log_level: str = Field(
+        default="INFO",
+        description="Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL",
+    )
+
+
 class CharacterManagerSettings(BaseModel):
     """Settings for the character manager."""
 
@@ -144,6 +178,14 @@ class UserSettings(BaseModel):
     custom_prices: dict[str, dict[str, float | None]] = Field(
         default_factory=dict,
         description="Custom prices for items (key = type_id, value = {buy, sell})",
+    )
+    market_value: MarketValuePreferences = Field(
+        default_factory=MarketValuePreferences,
+        description="Market value source and calculation preferences",
+    )
+    logging: LoggingPreferences = Field(
+        default_factory=LoggingPreferences,
+        description="Logging preferences for file output and retention",
     )
 
     # Account management: allows mapping characters to accounts and storing
@@ -797,6 +839,52 @@ class SettingsManager:
             return None
         return chars[0]
 
+    # -------------------------------------------------------------------------
+    # Market Value Preferences
+    # -------------------------------------------------------------------------
+
+    def get_market_source_station(self) -> str:
+        """Get the market station for price lookups."""
+        return self._settings.market_value.source_station
+
+    def set_market_source_station(self, station: str) -> None:
+        """Set the market station for price lookups.
+
+        Args:
+            station: One of 'jita', 'amarr', 'dodixie', 'rens', 'hek'
+        """
+        valid_stations = {"jita", "amarr", "dodixie", "rens", "hek"}
+        if station.lower() in valid_stations:
+            self._settings.market_value.source_station = station.lower()
+            self._save()
+
+    def get_market_price_type(self) -> str:
+        """Get the price type for market calculations."""
+        return self._settings.market_value.price_type
+
+    def set_market_price_type(self, price_type: str) -> None:
+        """Set the price type for market calculations.
+
+        Args:
+            price_type: One of 'buy', 'sell', 'weighted'
+        """
+        valid_types = {"buy", "sell", "weighted"}
+        if price_type.lower() in valid_types:
+            self._settings.market_value.price_type = price_type.lower()
+            self._save()
+
+    def get_market_weighted_buy_ratio(self) -> float:
+        """Get the buy weight ratio for weighted price calculations."""
+        return self._settings.market_value.weighted_buy_ratio
+
+    def set_market_weighted_buy_ratio(self, ratio: float) -> None:
+        """Set the buy weight ratio for weighted price calculations.
+
+        Args:
+            ratio: Float between 0.0 and 1.0
+        """
+        self._settings.market_value.weighted_buy_ratio = max(0.0, min(1.0, ratio))
+        self._save()
 
 # Global singleton accessor
 _manager_instance: SettingsManager | None = None
