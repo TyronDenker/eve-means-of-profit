@@ -152,7 +152,7 @@ class CharacterManagerSettings(BaseModel):
     )
     portrait_size: int = Field(
         default=1024,
-        description="Character portrait size in pixels (64, 96, 128, 192, 256)",
+        description="Character portrait size in pixels (64, 96, 128, 192, 256, 512, 1024)",
     )
     sidebar_visible: bool = Field(
         default=True,
@@ -886,6 +886,42 @@ class SettingsManager:
         self._settings.market_value.weighted_buy_ratio = max(0.0, min(1.0, ratio))
         self._save()
 
+    # -------------------------------------------------------------------------
+    # Logging Preferences
+    # -------------------------------------------------------------------------
+
+    def get_logging_save_to_file(self) -> bool:
+        """Get whether logs should be saved to files."""
+        return self._settings.logging.save_to_file
+
+    def set_logging_save_to_file(self, enabled: bool) -> None:
+        """Set whether logs should be saved to files."""
+        self._settings.logging.save_to_file = bool(enabled)
+        self._save()
+
+    def get_logging_retention_count(self) -> int:
+        """Get the number of log files to retain."""
+        return self._settings.logging.retention_count
+
+    def set_logging_retention_count(self, count: int) -> None:
+        """Set the number of log files to retain."""
+        self._settings.logging.retention_count = max(1, min(365, count))
+        self._save()
+
+    def get_logging_level(self) -> str:
+        """Get the logging level."""
+        return self._settings.logging.log_level
+
+    def set_logging_level(self, level: str) -> None:
+        """Set the logging level.
+
+        Args:
+            level: One of 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
+        """
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if level.upper() in valid_levels:
+            self._settings.logging.log_level = level.upper()
+            self._save()
 # Global singleton accessor
 _manager_instance: SettingsManager | None = None
 _manager_lock = threading.Lock()
