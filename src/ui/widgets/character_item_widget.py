@@ -284,16 +284,15 @@ class CharacterItemWidget(QWidget):
         )
         self._networth_grid = QGridLayout(self._networth_container)
         self._networth_grid.setContentsMargins(0, 0, 0, 0)
-        self._networth_grid.setHorizontalSpacing(4)  # Small spacing between columns
-        self._networth_grid.setVerticalSpacing(1)
-        # Columns: label (minimal), value (minimal), timer (fixed)
+        self._networth_grid.setHorizontalSpacing(2)  # Tighter spacing between columns
+        self._networth_grid.setVerticalSpacing(0)  # Tighter vertical spacing
+        # Columns: label (minimal), value (minimal), timer (conditional)
         # Keep all columns with 0 stretch so they don't expand
         self._networth_grid.setColumnStretch(0, 0)
         self._networth_grid.setColumnStretch(1, 0)
         self._networth_grid.setColumnStretch(2, 0)
-        # Timer column has fixed width to prevent shifting when toggled
-        # Reserve space even when hidden to maintain consistent positioning
-        self._networth_grid.setColumnMinimumWidth(2, 44)
+        # Timer column width will be set dynamically based on visibility
+        # Don't reserve space when hidden to avoid wasted horizontal space
 
         # Top-align a spacer so the networth grid sits at the bottom of the
         # right side (matching the card UI where the portrait is above).
@@ -312,21 +311,32 @@ class CharacterItemWidget(QWidget):
         # Width varies based on networth visibility
         rc = getattr(self, "_right_container", None)
         if self._networth_visible and self._view_mode == "card":
-            # Much wider when showing networth - need space for name + networth grid with timers
-            self.setMinimumWidth(portrait_size + 180)
-            # Don't cap the width in card mode; allow expansion beyond the
-            # minimum so long values don't get clipped.
-            self.setMaximumWidth(16777215)
+            # Calculate minimum width based on actual content
+            # Portrait + small buffer for name column + networth grid
+            base_width = portrait_size + 120  # Reduced from 140 for tighter layout
+
+            # Add extra width only if timers are visible (smaller timer column)
+            if self._timers_visible:
+                base_width += 40  # Reduced from 50 for compact timer column
+
+            self.setMinimumWidth(base_width)
+            # Allow some expansion but not unlimited
+            self.setMaximumWidth(base_width + 80)
+
             if rc is not None:
-                # Give a bit more room on the right side so the value column
-                # and the timer column have space and don't force wrapping.
-                rc.setMinimumWidth(160)
+                # Tighter constraints for right container
+                min_rc_width = (
+                    110 if not self._timers_visible else 130
+                )  # Reduced widths
+                rc.setMinimumWidth(min_rc_width)
+                rc.setMaximumWidth(min_rc_width + 40)
         else:
             # More compact when networth is hidden
             self.setMinimumWidth(0)
-            self.setMaximumWidth(16777215)
+            self.setMaximumWidth(portrait_size + 100)
             if rc is not None:
                 rc.setMinimumWidth(0)
+                rc.setMaximumWidth(0)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802  # type: ignore[override]
         """Handle events for child widgets (hover on portrait)."""
@@ -429,7 +439,7 @@ class CharacterItemWidget(QWidget):
                     f"color: {COLORS.TEXT_MUTED}; font-size: {networth_font_size}px;"
                 )
                 label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-                label.setContentsMargins(0, 0, 2, 0)
+                label.setContentsMargins(0, 0, 0, 0)  # Remove all margins
                 label.setMinimumWidth(0)
                 label.setSizePolicy(
                     QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
@@ -446,8 +456,8 @@ class CharacterItemWidget(QWidget):
                 value.setSizePolicy(
                     QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
                 )
-                # Keep minimal margins so the label and value stay tight.
-                value.setContentsMargins(2, 0, 2, 0)
+                # Minimal margins - just 1px left to separate from label
+                value.setContentsMargins(1, 0, 0, 0)
                 value.setTextInteractionFlags(
                     Qt.TextInteractionFlag.TextSelectableByMouse
                 )
@@ -457,38 +467,35 @@ class CharacterItemWidget(QWidget):
                 self._networth_grid.addWidget(
                     value, row, 1, alignment=Qt.AlignmentFlag.AlignLeft
                 )
-            # Add endpoint timers into the grid (column 2) when available and visible
+            # Add endpoint timers into the grid (column 2) - always show when timers visible
             if self._timers_visible:
                 for row, (label_text, _) in enumerate(data_items):
                     endpoint_key = self._get_endpoint_key_for_item(label_text)
+                    # Always create timer widget, set expiry if available
+                    timer_widget = EndpointTimer("", self, compact=True)
                     if endpoint_key and endpoint_key in self._endpoint_timers:
                         timer_seconds = self._endpoint_timers[endpoint_key]
-                        timer_widget = EndpointTimer("", self, compact=True)
                         timer_widget.set_expiry(timer_seconds)
-                        # Keep timer compact and fixed; give it a small fixed width
-                        # since the value column expands and we don't want the timer
-                        # to cause the value column to shrink.
-                        timer_widget.setFixedHeight(16)
-                        timer_widget.setFixedWidth(44)
-                        # Allow the timer to show its contents and not be squished
-                        # by setting a preferred size policy while keeping a fixed
-                        # width so it does not steal width from the value column.
-                        timer_widget.setSizePolicy(
-                            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
-                        )
-                        # Remove internal margins so timers sit immediately next
-                        # to value labels with no visible gap; EndpointTimer adds
-                        # a small margin in compact mode by default.
-                        try:
-                            inner_layout = timer_widget.layout()
-                            if inner_layout is not None:
-                                inner_layout.setContentsMargins(0, 0, 0, 0)
-                        except Exception:
-                            pass
-                        timer_widget.show()
-                        self._networth_grid.addWidget(
-                            timer_widget, row, 2, alignment=Qt.AlignmentFlag.AlignLeft
-                        )
+                    else:
+                        # Show ready state when no timer data available
+                        timer_widget.set_expiry(None)
+                    # Tight timer column - smaller fixed width, compact display
+                    timer_widget.setFixedHeight(14)
+                    timer_widget.setFixedWidth(36)
+                    timer_widget.setSizePolicy(
+                        QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+                    )
+                    # Remove internal margins for tight layout
+                    try:
+                        inner_layout = timer_widget.layout()
+                        if inner_layout is not None:
+                            inner_layout.setContentsMargins(0, 0, 0, 0)
+                    except Exception:
+                        pass
+                    timer_widget.show()
+                    self._networth_grid.addWidget(
+                        timer_widget, row, 2, alignment=Qt.AlignmentFlag.AlignLeft
+                    )
             # Ensure networth container visibility is updated
             if self._networth_container is not None:
                 self._networth_container.setVisible(self._networth_visible)
@@ -507,6 +514,13 @@ class CharacterItemWidget(QWidget):
                 rc.adjustSize()
             self.updateGeometry()
             self._update_width_constraints()
+
+            # Force a repaint to ensure visibility changes take effect immediately
+            if self._networth_container is not None:
+                self._networth_container.update()
+            if rc is not None:
+                rc.update()
+            self.update()
         except Exception:
             logger.debug("Failed to set networth display", exc_info=True)
 
@@ -714,17 +728,33 @@ class CharacterItemWidget(QWidget):
             visible: Whether endpoint timers should be visible
         """
         try:
+            was_visible = self._timers_visible
             self._timers_visible = bool(visible)
-            # Update timer visibility without full re-render for better performance
-            # Iterate through grid items and show/hide timer widgets (column 2)
-            for row in range(self._networth_grid.rowCount()):
-                timer_item = self._networth_grid.itemAtPosition(row, 2)
-                if timer_item is not None:
-                    timer_widget = timer_item.widget()
-                    if timer_widget is not None:
-                        timer_widget.setVisible(visible)
-            # Update layout constraints to maintain consistent spacing
+
+            # If visibility changed and we have networth data, re-render to properly layout
+            if (
+                was_visible != self._timers_visible
+                and self._networth_snapshot is not None
+            ):
+                self.set_networth(self._networth_snapshot)
+            else:
+                # Just update timer visibility without full re-render
+                for row in range(self._networth_grid.rowCount()):
+                    timer_item = self._networth_grid.itemAtPosition(row, 2)
+                    if timer_item is not None:
+                        timer_widget = timer_item.widget()
+                        if timer_widget is not None:
+                            timer_widget.setVisible(visible)
+
+            # Update layout constraints to adjust card width
             self._update_width_constraints()
+            self.updateGeometry()
+
+            # Force parent to recalculate layout
+            parent = self.parentWidget()
+            if parent is not None:
+                parent.updateGeometry()
+
         except Exception:
             logger.debug("Failed to set timers visibility", exc_info=True)
 

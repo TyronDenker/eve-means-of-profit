@@ -541,6 +541,7 @@ class AccountGroupWidget(QFrame):
     """Widget displaying an account with its characters."""
 
     character_dropped = pyqtSignal(int, object)  # character_id, target_account_id
+    character_reordered = pyqtSignal(object, list)  # account_id, new_order_list
     character_clicked = pyqtSignal(int)  # character_id
     character_context_menu = pyqtSignal(int, object)  # character_id, global_pos
     account_refresh_requested = pyqtSignal(object)  # account_id
@@ -899,16 +900,62 @@ class AccountGroupWidget(QFrame):
             event.ignore()
 
     def dropEvent(self, event: QDropEvent) -> None:  # type: ignore[override]  # noqa: N802
-        """Handle character drop."""
+        """Handle character drop - supports both reassignment and reordering."""
         mime = event.mimeData()
         if mime is not None and mime.hasFormat("application/x-character-id"):
             char_id_bytes = mime.data("application/x-character-id")
             try:
                 character_id = int(char_id_bytes.data().decode())
-                self.character_dropped.emit(character_id, self.account_id)
-                event.acceptProposedAction()
+
+                # Check if this is a reorder (character already in this account)
+                is_reorder = any(
+                    card.character_id == character_id for card in self.character_cards
+                )
+
+                if is_reorder and self.account_id is not None:
+                    # Handle reordering within the same account
+                    # Find the drop position
+                    drop_pos = (
+                        event.position().toPoint()
+                        if hasattr(event.position(), "toPoint")
+                        else event.pos()
+                    )
+
+                    # Find which card we're dropping near
+                    target_index = len(self.character_cards)  # Default to end
+                    for i, card in enumerate(self.character_cards):
+                        card_center = card.geometry().center()
+                        if drop_pos.x() < card_center.x():
+                            target_index = i
+                            break
+
+                    # Move the card in the list
+                    current_index = next(
+                        i
+                        for i, card in enumerate(self.character_cards)
+                        if card.character_id == character_id
+                    )
+
+                    if current_index != target_index:
+                        # Reorder the list
+                        card = self.character_cards.pop(current_index)
+                        # Adjust target if we removed from before it
+                        if current_index < target_index:
+                            target_index -= 1
+                        self.character_cards.insert(target_index, card)
+
+                        # Relayout and emit signal
+                        self._relayout()
+                        new_order = [card.character_id for card in self.character_cards]
+                        self.character_reordered.emit(self.account_id, new_order)
+
+                    event.acceptProposedAction()
+                else:
+                    # Handle moving to different account
+                    self.character_dropped.emit(character_id, self.account_id)
+                    event.acceptProposedAction()
             except Exception:
-                logger.exception("Failed to parse dropped character ID")
+                logger.exception("Failed to handle character drop")
                 event.ignore()
         else:
             event.ignore()

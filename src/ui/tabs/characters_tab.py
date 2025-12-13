@@ -147,13 +147,15 @@ class CharactersTab(QWidget):
         controls_row.setSpacing(12)
 
         self.timers_checkbox = QCheckBox("Show endpoint timers")
-        self.timers_checkbox.setChecked(True)
+        # Restore saved state from settings
+        self.timers_checkbox.setChecked(self._settings.get_show_endpoint_timers())
         self.timers_checkbox.setStyleSheet(AppStyles.CHECKBOX)
         self.timers_checkbox.stateChanged.connect(self._on_timers_toggle)
         controls_row.addWidget(self.timers_checkbox)
 
         self.listview_checkbox = QCheckBox("List view")
-        self.listview_checkbox.setChecked(False)
+        # Restore saved state from settings
+        self.listview_checkbox.setChecked(self._settings.get_list_view_enabled())
         self.listview_checkbox.setStyleSheet(AppStyles.CHECKBOX)
         self.listview_checkbox.stateChanged.connect(self._on_listview_toggle)
         controls_row.addWidget(self.listview_checkbox)
@@ -526,6 +528,22 @@ class CharactersTab(QWidget):
                 f"Refreshing {account_name}", total=total_chars * 6
             )
 
+            # Create snapshot group for the account
+            snapshot_group_id = None
+            if self._networth_service is not None:
+                try:
+                    snapshot_group_id = (
+                        await self._networth_service.create_snapshot_group(
+                            account_id, label="Account refresh"
+                        )
+                    )
+                except Exception:
+                    logger.debug(
+                        "Unable to create snapshot group for account %s",
+                        account_id,
+                        exc_info=True,
+                    )
+
             completed_endpoints = 0
             total_successes = 0
             total_failures = 0
@@ -540,21 +558,7 @@ class CharactersTab(QWidget):
 
                 char_name = self._get_character_name(character_id)
 
-                # Create snapshot group
-                snapshot_group_id = None
-                if self._networth_service is not None:
-                    try:
-                        snapshot_group_id = (
-                            await self._networth_service.create_snapshot_group(
-                                account_id, label="Account refresh"
-                            )
-                        )
-                    except Exception:
-                        logger.debug(
-                            "Unable to create snapshot group for character %s",
-                            character_id,
-                            exc_info=True,
-                        )
+                # snapshot_group_id already created
 
                 # Run parallel endpoint updates
                 results = await self._refresh_character_endpoints_parallel_batch(
@@ -594,6 +598,8 @@ class CharactersTab(QWidget):
                     )
                     if character:
                         await self._load_networth(character, char_widget)
+                        # Publish endpoint timers now that endpoints have been fetched
+                        self._publish_endpoint_timers(character_id)
 
             # Complete progress
             if total_failures > 0:
@@ -657,39 +663,27 @@ class CharactersTab(QWidget):
                 f"Refreshing {total_chars} characters", total=total_chars * 6
             )
 
+            # Create snapshot group for all characters
+            snapshot_group_id = None
+            if self._networth_service is not None:
+                try:
+                    snapshot_group_id = (
+                        await self._networth_service.create_snapshot_group(
+                            None, label="Refresh all"
+                        )
+                    )
+                except Exception:
+                    logger.debug(
+                        "Unable to create snapshot group for refresh all",
+                        exc_info=True,
+                    )
+
             completed_endpoints = 0
             total_successes = 0
             total_failures = 0
 
             for idx, character_id in enumerate(character_ids):
-                # Check for cancellation
-                if self._cancel_token and self._cancel_token.is_cancelled:
-                    self._signal_bus.status_message.emit("Refresh cancelled")
-                    self._progress_widget.cancel()
-                    return
-
                 char_name = self._get_character_name(character_id)
-
-                # Create snapshot group for this character
-                snapshot_group_id = None
-                if self._networth_service is not None:
-                    try:
-                        account_for_char = None
-                        if hasattr(self._settings, "get_account_for_character"):
-                            account_for_char = self._settings.get_account_for_character(
-                                character_id
-                            )
-                        snapshot_group_id = (
-                            await self._networth_service.create_snapshot_group(
-                                account_for_char, label="Refresh all"
-                            )
-                        )
-                    except Exception:
-                        logger.debug(
-                            "Unable to create snapshot group for character %s",
-                            character_id,
-                            exc_info=True,
-                        )
 
                 # Run parallel endpoint updates for this character
                 results = await self._refresh_character_endpoints_parallel_batch(
@@ -729,6 +723,8 @@ class CharactersTab(QWidget):
                     )
                     if character:
                         await self._load_networth(character, char_widget)
+                        # Publish endpoint timers now that endpoints have been fetched
+                        self._publish_endpoint_timers(character_id)
 
             # Complete progress
             if total_failures > 0:
@@ -956,11 +952,34 @@ class CharactersTab(QWidget):
 
                 group = AccountGroupWidget(acc_id, acc_name, plex_units)
                 group.character_dropped.connect(self._on_character_dropped)
+                group.character_reordered.connect(self._on_character_reordered)
                 group.character_clicked.connect(self._on_character_clicked)
                 group.character_context_menu.connect(self._show_context_menu)
                 group.account_refresh_requested.connect(self._on_refresh_account)
 
-                for ch in acc_buckets.get(acc_id, []):
+                # Get characters for this account
+                chars_for_account = acc_buckets.get(acc_id, [])
+
+                # Get saved character order for this account
+                saved_order = self._settings.get_account_character_order(acc_id)
+
+                # Sort characters according to saved order (if exists)
+                if saved_order:
+                    # Create a map of character_id -> character for quick lookup
+                    char_map = {
+                        getattr(ch, "character_id", 0): ch for ch in chars_for_account
+                    }
+                    # Build ordered list based on saved order, then append any missing ones
+                    ordered_chars = []
+                    for char_id in saved_order:
+                        if char_id in char_map:
+                            ordered_chars.append(char_map[char_id])
+                            del char_map[char_id]
+                    # Append any characters not in saved order (new additions)
+                    ordered_chars.extend(char_map.values())
+                    chars_for_account = ordered_chars
+
+                for ch in chars_for_account:
                     char_widget = await self._create_character_widget(ch)
                     group.add_character(getattr(ch, "character_id", 0), char_widget)
 
@@ -983,6 +1002,7 @@ class CharactersTab(QWidget):
             if None in acc_buckets:
                 group = AccountGroupWidget(None, "Unassigned")
                 group.character_dropped.connect(self._on_character_dropped)
+                group.character_reordered.connect(self._on_character_reordered)
                 group.character_clicked.connect(self._on_character_clicked)
                 group.character_context_menu.connect(self._show_context_menu)
                 group.account_refresh_requested.connect(self._on_refresh_account)
@@ -1236,14 +1256,18 @@ class CharactersTab(QWidget):
                 if self._networth_service is not None
                 else None
             )
+            # Set the networth data
             widget.set_networth(latest)
             # Store snapshot reference for list view access
             widget._networth_snapshot = latest
+
+            # Ensure networth is visible after data is loaded (always show in card mode)
+            widget.set_networth_visible(True)
+
             # Don't publish endpoint timers here - they're only available after
             # endpoints have been actually fetched (when user refreshes character).
             # Endpoint timers will be populated after _refresh_character_endpoints_parallel_batch()
-            # Apply networth visibility based on checkbox
-            widget.set_networth_visible(True)  # Always show networth
+
             try:
                 widget.updateGeometry()
                 parent_card = widget.parentWidget()
@@ -1270,6 +1294,9 @@ class CharactersTab(QWidget):
         """Show/hide endpoint timers across character cards."""
         visible = state != 0
         try:
+            # Save the state to settings
+            self._settings.set_show_endpoint_timers(visible)
+
             if self.listview_checkbox.isChecked():
                 visible = False
             for group in self.account_groups.values():
@@ -1290,6 +1317,9 @@ class CharactersTab(QWidget):
         """Switch between card and list views, and update UI accordingly."""
         is_list = state != 0
         try:
+            # Save the state to settings
+            self._settings.set_list_view_enabled(is_list)
+
             if is_list:
                 # Remember timers checkbox state and disable it
                 self._timers_checkbox_prev_state = self.timers_checkbox.isChecked()
@@ -1529,11 +1559,27 @@ class CharactersTab(QWidget):
 
     def _on_character_dropped(self, character_id: int, target_account_id):
         """Handle character drop onto account group."""
+        # Get source account before reassigning
+        source_account_id = self._settings.get_account_for_character(character_id)
+
+        # Perform the reassignment
         self._handle_reassign(character_id, target_account_id)
-        # Refresh UI
-        task = asyncio.create_task(self._refresh_after_reassign())
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+
+        # Update UI incrementally without full repopulation
+        self._update_character_assignment_ui(
+            character_id, source_account_id, target_account_id
+        )
+
+    def _on_character_reordered(self, account_id: int, new_order: list[int]):
+        """Handle character reordering within an account."""
+        try:
+            if account_id is not None:
+                self._settings.set_account_character_order(account_id, new_order)
+                logger.info(
+                    f"Character order updated for account {account_id}: {new_order}"
+                )
+        except Exception:
+            logger.exception("Failed to save character order")
 
     def _on_character_clicked(self, character_id: int):
         """Handle character click for selection."""
@@ -1575,6 +1621,83 @@ class CharactersTab(QWidget):
             await self._populate_characters(self._last_loaded_characters)
         except Exception:
             logger.exception("Failed to refresh UI after reassignment")
+
+    def _update_character_assignment_ui(
+        self,
+        character_id: int,
+        source_account_id: int | None,
+        target_account_id: int | None,
+    ):
+        """Incrementally update UI when a character is reassigned between accounts.
+
+        This avoids full widget repopulation and eliminates flicker by moving the
+        character widget from source to target account group in place.
+
+        Args:
+            character_id: The character being reassigned
+            source_account_id: Previous account (None if unassigned)
+            target_account_id: New account (None if unassigning)
+        """
+        try:
+            # If source and target are the same, nothing to do
+            if source_account_id == target_account_id:
+                return
+
+            # Find the source and target account group widgets
+            source_group = self.account_groups.get(source_account_id)
+            target_group = self.account_groups.get(target_account_id)
+
+            # Remove character from source group
+            if source_group is not None and hasattr(source_group, "remove_character"):
+                source_group.remove_character(character_id)
+                logger.debug(
+                    f"Removed character {character_id} from account {source_account_id}"
+                )
+
+            # If target is None or doesn't have a widget yet, do full refresh
+            # (this handles edge cases like moving to newly created unassigned group)
+            if target_group is None or not hasattr(target_group, "add_character"):
+                logger.debug("Target group not ready, falling back to full refresh")
+                task = asyncio.create_task(
+                    self._populate_characters(self._last_loaded_characters)
+                )
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+                return
+
+            # Find the character widget for this character_id
+            char_widget = None
+            for ch in self._last_loaded_characters:
+                if getattr(ch, "character_id", 0) == character_id:
+                    # Create a new widget for the target group
+                    task = asyncio.create_task(
+                        self._add_character_to_group(ch, target_group, character_id)
+                    )
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                    break
+
+            logger.info(
+                f"Incrementally moved character {character_id} from account {source_account_id} to {target_account_id}"
+            )
+        except Exception:
+            logger.exception(
+                f"Failed to incrementally update character {character_id} assignment, falling back to full refresh"
+            )
+            # Fall back to full refresh on error
+            task = asyncio.create_task(
+                self._populate_characters(self._last_loaded_characters)
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
+    async def _add_character_to_group(self, character, group, character_id: int):
+        """Helper to asynchronously create and add a character widget to a group."""
+        try:
+            char_widget = await self._create_character_widget(character)
+            group.add_character(character_id, char_widget)
+        except Exception:
+            logger.exception(f"Failed to add character {character_id} to group")
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802  # type: ignore[override]
         if obj is self.accounts_container and event.type() == QEvent.Type.Resize:

@@ -162,6 +162,20 @@ class CharacterManagerSettings(BaseModel):
         default=True,
         description="When true, hovering over a character portrait shows a refresh button",
     )
+    # Character ordering within accounts
+    account_character_order: dict[str, list[int]] = Field(
+        default_factory=dict,
+        description="Character order per account: {account_id: [char_id1, char_id2, ...]}",
+    )
+    # View state persistence
+    show_endpoint_timers: bool = Field(
+        default=True,
+        description="Whether to show endpoint timers in character cards",
+    )
+    list_view_enabled: bool = Field(
+        default=False,
+        description="Whether list view is enabled instead of card view",
+    )
 
 
 class UserSettings(BaseModel):
@@ -922,6 +936,76 @@ class SettingsManager:
         if level.upper() in valid_levels:
             self._settings.logging.log_level = level.upper()
             self._save()
+
+    # -------------------------------------------------------------------------
+    # View State Persistence
+    # -------------------------------------------------------------------------
+
+    def get_show_endpoint_timers(self) -> bool:
+        """Get whether endpoint timers are shown in character cards.
+
+        Returns:
+            True if timers should be shown, False otherwise
+        """
+        return self._settings.character_manager.show_endpoint_timers
+
+    def set_show_endpoint_timers(self, visible: bool) -> None:
+        """Set whether endpoint timers are shown in character cards.
+
+        Args:
+            visible: True to show timers, False to hide them
+        """
+        self._settings.character_manager.show_endpoint_timers = bool(visible)
+        self._save()
+
+    def get_list_view_enabled(self) -> bool:
+        """Get whether list view is enabled instead of card view.
+
+        Returns:
+            True if list view is enabled, False for card view
+        """
+        return self._settings.character_manager.list_view_enabled
+
+    def set_list_view_enabled(self, enabled: bool) -> None:
+        """Set whether list view is enabled instead of card view.
+
+        Args:
+            enabled: True to enable list view, False for card view
+        """
+        self._settings.character_manager.list_view_enabled = bool(enabled)
+        self._save()
+
+    # -------------------------------------------------------------------------
+    # Character Ordering within Accounts
+    # -------------------------------------------------------------------------
+
+    def get_account_character_order(self, account_id: int) -> list[int]:
+        """Get the ordered list of character IDs for an account.
+
+        Args:
+            account_id: Account identifier
+
+        Returns:
+            Ordered list of character IDs, or empty list if not set
+        """
+        order = self._settings.character_manager.account_character_order.get(
+            str(account_id), []
+        )
+        return [int(x) for x in order]
+
+    def set_account_character_order(self, account_id: int, order: list[int]) -> None:
+        """Set the character order for an account.
+
+        Args:
+            account_id: Account identifier
+            order: Ordered list of character IDs
+        """
+        self._settings.character_manager.account_character_order[str(account_id)] = [
+            int(x) for x in order
+        ]
+        self._save()
+
+
 # Global singleton accessor
 _manager_instance: SettingsManager | None = None
 _manager_lock = threading.Lock()
