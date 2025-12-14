@@ -587,6 +587,60 @@ async def get_account_plex_for_group(
     return [dict(row) for row in rows]
 
 
+async def get_snapshot_groups_in_range(
+    repo: Repository,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    refresh_source: str | None = None,
+) -> list[dict]:
+    """Get snapshot groups within a time range.
+
+    Retrieves groups for graph aggregation, optionally filtered by refresh source.
+
+    Args:
+        repo: Repository instance
+        start: Optional earliest created_at (inclusive)
+        end: Optional latest created_at (inclusive)
+        refresh_source: Optional filter by refresh source ('refresh_all', 'account', 'character')
+
+    Returns:
+        List of snapshot group records sorted by created_at DESC
+
+    Example:
+        groups = await networth.get_snapshot_groups_in_range(
+            repo,
+            start=datetime(2025, 12, 1),
+            end=datetime(2025, 12, 14),
+            refresh_source='refresh_all'
+        )
+        for group in groups:
+            print(f"Group {group['snapshot_group_id']} at {group['created_at']}")
+    """
+    clauses = []
+    params: list[object] = []
+
+    if start is not None:
+        clauses.append("created_at >= ?")
+        params.append(start.isoformat())
+    if end is not None:
+        clauses.append("created_at <= ?")
+        params.append(end.isoformat())
+    if refresh_source is not None:
+        clauses.append("refresh_source = ?")
+        params.append(refresh_source)
+
+    where = " AND ".join(clauses) if clauses else "1=1"
+    sql = f"""
+        SELECT snapshot_group_id, account_id, refresh_source, created_at, label
+        FROM networth_snapshot_groups
+        WHERE {where}
+        ORDER BY created_at DESC
+    """
+
+    rows = await repo.fetchall(sql, tuple(params))
+    return [dict(row) for row in rows]
+
+
 __all__ = [
     "delete_snapshot",
     "get_account_plex_for_group",
@@ -597,6 +651,7 @@ __all__ = [
     "get_latest_networth",
     "get_networth_history",
     "get_snapshots_for_group",
+    "get_snapshot_groups_in_range",
     "get_snapshots_up_to_time",
     "save_account_plex_snapshot",
     "save_character_lifecycle_event",
