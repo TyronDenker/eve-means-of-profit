@@ -1,0 +1,59 @@
+name: Test Build
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: windows-latest
+    name: Test Build (Verify PyInstaller works)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+        shell: pwsh
+
+      - name: Verify build (dry run)
+        run: |
+          Write-Host "Testing PyInstaller build process..." -ForegroundColor Cyan
+          uv run pyinstaller eve-means-of-profit.spec --clean
+          
+          if (Test-Path "dist\EVE Means of Profit.exe") {
+            $file = Get-Item "dist\EVE Means of Profit.exe"
+            $sizeMB = [math]::Round($file.Length / 1MB, 2)
+            Write-Host "✅ Build successful! Size: $sizeMB MB" -ForegroundColor Green
+          } else {
+            Write-Host "❌ Build failed - executable not found" -ForegroundColor Red
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Upload build artifact (PR only)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eve-means-of-profit-pr-build
+          path: dist/EVE Means of Profit.exe
+          retention-days: 5
+          compression-level: 0

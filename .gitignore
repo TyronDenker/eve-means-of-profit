@@ -17,4 +17,6 @@ htmlcov/
 /data/
 .env*
 *.log
-.github
+.github/*
+!.github/workflows/
+!.github/workflows/**

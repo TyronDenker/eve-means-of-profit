@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    name: Build and Release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+        shell: pwsh
+
+      - name: Build executable
+        run: |
+          Write-Host "Building EVE Means of Profit executable..." -ForegroundColor Cyan
+          uv run pyinstaller eve-means-of-profit.spec --clean
+          
+          if (Test-Path "dist\EVE Means of Profit.exe") {
+            $file = Get-Item "dist\EVE Means of Profit.exe"
+            $sizeMB = [math]::Round($file.Length / 1MB, 2)
+            Write-Host "✅ Build successful! Size: $sizeMB MB" -ForegroundColor Green
+          } else {
+            Write-Host "❌ Build failed - executable not found" -ForegroundColor Red
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the current tag
+          $currentTag = "${{ github.ref }}" -replace "refs/tags/", ""
+          
+          # Get the previous tag
+          $previousTag = git describe --tags --abbrev=0 "@^" 2>$null
+          
+          if ($previousTag) {
+            $range = "$previousTag..$currentTag"
+            Write-Host "Generating changelog for $range" -ForegroundColor Cyan
+          } else {
+            $range = $currentTag
+            Write-Host "First release: $currentTag" -ForegroundColor Cyan
+          }
+          
+          # Generate changelog
+          $changelog = git log $range --oneline --format="- %h %s"
+          
+          # Write to file and output
+          $changelog | Out-File -FilePath "CHANGELOG_RELEASE.md" -Encoding UTF8
+          "changelog=$changelog" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/EVE Means of Profit.exe
+          body: |
+            ## EVE Means of Profit ${{ github.ref_name }}
+
+            ### Installation
+
+            1. Download `EVE Means of Profit.exe` from this release
+            2. Create a folder called `data` in the same directory as the executable
+            3. Run the executable - on first launch, it will automatically download required SDE data (~100 MB)
+            4. Authenticate with your EVE Online account
+
+            ### Changes in this release
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Requirements
+
+            - Windows 7 or later
+            - Active internet connection (for ESI API and data downloads on first run)
+
+            ### Support
+
+            - **Issues**: [GitHub Issues](https://github.com/TyronDenker/eve-means-of-profit/issues)
+            - **Discord**: [Join our community](https://discord.gg/MeVk5ey2Qu)
+
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
