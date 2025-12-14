@@ -68,9 +68,6 @@ class PreferencesDialog(QDialog):
         # Logging tab
         self.tabs.addTab(self._create_logging_tab(), "Logging")
 
-        # Display tab (character UI settings)
-        self.tabs.addTab(self._create_display_tab(), "Display")
-
         # Button row
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -216,51 +213,6 @@ class PreferencesDialog(QDialog):
         layout.addStretch()
         return widget
 
-    def _create_display_tab(self) -> QWidget:
-        """Create display/UI preferences tab."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        # Character display group
-        char_group = QGroupBox("Character Display")
-        char_group.setStyleSheet(AppStyles.GROUP_BOX)
-        char_layout = QFormLayout(char_group)
-
-        # Portrait size
-        self.portrait_combo = QComboBox()
-        self.portrait_combo.addItems(["64", "96", "128", "192", "256"])
-        self.portrait_combo.setStyleSheet(AppStyles.COMBOBOX)
-        char_layout.addRow("Portrait Size:", self.portrait_combo)
-
-        # Font sizes
-        self.name_font_spin = QSpinBox()
-        self.name_font_spin.setRange(8, 24)
-        self.name_font_spin.setSuffix(" px")
-        self.name_font_spin.setStyleSheet(AppStyles.SPINBOX)
-        char_layout.addRow("Name Font Size:", self.name_font_spin)
-
-        self.corp_font_spin = QSpinBox()
-        self.corp_font_spin.setRange(8, 18)
-        self.corp_font_spin.setSuffix(" px")
-        self.corp_font_spin.setStyleSheet(AppStyles.SPINBOX)
-        char_layout.addRow("Corp/Alliance Font:", self.corp_font_spin)
-
-        self.networth_font_spin = QSpinBox()
-        self.networth_font_spin.setRange(8, 16)
-        self.networth_font_spin.setSuffix(" px")
-        self.networth_font_spin.setStyleSheet(AppStyles.SPINBOX)
-        char_layout.addRow("Networth Font:", self.networth_font_spin)
-
-        # Show refresh on hover
-        self.refresh_hover_checkbox = QCheckBox("Show refresh button on hover")
-        self.refresh_hover_checkbox.setStyleSheet(AppStyles.CHECKBOX)
-        char_layout.addRow("Hover Behavior:", self.refresh_hover_checkbox)
-
-        layout.addWidget(char_group)
-
-        layout.addStretch()
-        return widget
-
     def _load_current_values(self) -> None:
         """Load current settings into UI controls."""
         # Market values
@@ -283,18 +235,6 @@ class PreferencesDialog(QDialog):
         level = self._settings.get_logging_level()
         level_index = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"].index(level)
         self.log_level_combo.setCurrentIndex(level_index)
-
-        # Display
-        portrait = str(self._settings.get_portrait_size())
-        portrait_index = ["64", "96", "128", "192", "256"].index(portrait)
-        self.portrait_combo.setCurrentIndex(portrait_index)
-
-        self.name_font_spin.setValue(self._settings.get_character_name_font_size())
-        self.corp_font_spin.setValue(self._settings.get_corp_alliance_font_size())
-        self.networth_font_spin.setValue(self._settings.get_networth_font_size())
-        self.refresh_hover_checkbox.setChecked(
-            self._settings.get_show_refresh_on_hover()
-        )
 
     def _on_price_type_changed(self, text: str) -> None:
         """Show/hide weighted ratio controls based on price type."""
@@ -334,19 +274,6 @@ class PreferencesDialog(QDialog):
             level_map = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
             self._settings.set_logging_level(
                 level_map[self.log_level_combo.currentIndex()]
-            )
-
-            # Display
-            portrait_map = [64, 96, 128, 192, 256]
-            self._settings.set_portrait_size(
-                portrait_map[self.portrait_combo.currentIndex()]
-            )
-
-            self._settings.set_character_name_font_size(self.name_font_spin.value())
-            self._settings.set_corp_alliance_font_size(self.corp_font_spin.value())
-            self._settings.set_networth_font_size(self.networth_font_spin.value())
-            self._settings.set_show_refresh_on_hover(
-                self.refresh_hover_checkbox.isChecked()
             )
 
             logger.info("User preferences saved successfully")
