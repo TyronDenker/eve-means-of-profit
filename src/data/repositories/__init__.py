@@ -11,9 +11,10 @@ with organized access methods for different data types:
 - market_orders: Functions for market order tracking
 - contracts: Functions for contract tracking
 - industry_jobs: Functions for industry job tracking
+- networth: Functions for networth snapshots, PLEX tracking, and lifecycle events
 
 Usage:
-    from data.repositories import Repository, assets, prices, transactions
+    from data.repositories import Repository, assets, prices, networth
 
     repo = Repository()
     await repo.initialize()
@@ -22,9 +23,9 @@ Usage:
     snapshot_id = await assets.save_snapshot(repo, character_id, asset_list)
     current = await assets.get_current_assets(repo, character_id)
 
-    # Use transaction functions
-    count = await transactions.save_transactions(repo, character_id, tx_list)
-    recent = await transactions.get_transactions(repo, character_id, limit=50)
+    # Use networth functions
+    plex_id = await networth.save_account_plex_snapshot(repo, account_id, units, price)
+    active = await networth.get_active_characters_at_time(repo, target_time)
 """
 
 from __future__ import annotations

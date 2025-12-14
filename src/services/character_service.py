@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from data.clients import ESIClient
+from data.repositories import Repository, networth
 from models.app.character_info import CharacterInfo
 
 logger = logging.getLogger(__name__)
@@ -16,13 +17,15 @@ class CharacterService:
     # Cache TTL: 1 hour - only refresh on explicit request or stale
     CACHE_TTL = timedelta(hours=1)
 
-    def __init__(self, esi_client: ESIClient):
+    def __init__(self, esi_client: ESIClient, repository: Repository | None = None):
         """Initialize character service.
 
         Args:
             esi_client: ESI client instance (required via DI)
+            repository: Repository instance for lifecycle tracking
         """
         self._client = esi_client
+        self._repo = repository
         self._image_cache: dict[str, bytes] = {}
         # Character info cache: character_id -> (CharacterInfo, last_updated)
         self._character_cache: dict[int, tuple[CharacterInfo, datetime]] = {}
@@ -184,7 +187,97 @@ class CharacterService:
         """
         if not self._client.auth:
             return False
-        return self._client.auth.remove_token(character_id)
+        success = self._client.auth.remove_token(character_id)
+
+        # Track lifecycle event
+        if success and self._repo:
+            try:
+                await networth.save_character_lifecycle_event(
+                    self._repo,
+                    character_id,
+                    "removed",
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to save lifecycle event for character removal %d",
+                    character_id,
+                    exc_info=True,
+                )
+
+        return success
+
+    async def add_character_to_account(
+        self, character_id: int, account_id: int | None = None
+    ) -> None:
+        """Record that a character was added.
+
+        Args:
+            character_id: Character ID being added
+            account_id: Optional account ID the character belongs to
+        """
+        if self._repo:
+            try:
+                await networth.save_character_lifecycle_event(
+                    self._repo,
+                    character_id,
+                    "added",
+                    account_id=account_id,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to save lifecycle event for character add %d",
+                    character_id,
+                    exc_info=True,
+                )
+
+    async def get_character_added_time(self, character_id: int) -> datetime | None:
+        """Get the time when a character was added.
+
+        Args:
+            character_id: Character ID
+
+        Returns:
+            datetime when character was added, or None
+        """
+        if not self._repo:
+            return None
+        try:
+            return await networth.get_character_added_time(self._repo, character_id)
+        except Exception:
+            logger.debug(
+                "Failed to get added time for character %d",
+                character_id,
+                exc_info=True,
+            )
+            return None
+
+    async def get_active_characters_at_time(
+        self, target_time: datetime, character_ids: list[int] | None = None
+    ) -> list[int]:
+        """Get characters that were active at a specific time.
+
+        Args:
+            target_time: Target timestamp
+            character_ids: Optional list of character IDs to check
+
+        Returns:
+            List of active character IDs
+        """
+        if not self._repo:
+            return character_ids or []
+        try:
+            active_chars = await networth.get_active_characters_at_time(
+                self._repo, target_time.isoformat()
+            )
+            if character_ids:
+                return [cid for cid in active_chars if cid in character_ids]
+            return active_chars
+        except Exception:
+            logger.debug(
+                "Failed to get active characters at time",
+                exc_info=True,
+            )
+            return character_ids or []
 
     async def _get_character_public_info(self, character_id: int) -> dict[str, Any]:
         """Get public character information from ESI.

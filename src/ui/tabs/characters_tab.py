@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QAction
@@ -43,6 +44,9 @@ from utils.progress_callback import (
 )
 from utils.settings_manager import get_settings_manager
 
+if TYPE_CHECKING:
+    from data import FuzzworkProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +63,7 @@ class CharactersTab(QWidget):
         contract_service: ContractService,
         industry_service: IndustryService,
         networth_service: NetWorthService | None = None,
+        fuzzwork_provider: "FuzzworkProvider | None" = None,
         parent=None,
     ):
         """Initialize characters tab.
@@ -71,6 +76,8 @@ class CharactersTab(QWidget):
             market_service: Service for market operations
             contract_service: Service for contract operations
             industry_service: Service for industry operations
+            networth_service: Service for networth operations
+            fuzzwork_provider: Provider for market data
             parent: Parent widget
         """
         super().__init__(parent)
@@ -82,6 +89,7 @@ class CharactersTab(QWidget):
         self._contract_service = contract_service
         self._industry_service = industry_service
         self._networth_service = networth_service
+        self._fuzzwork_provider = fuzzwork_provider
         self._settings = get_settings_manager()
         self._signal_bus = get_signal_bus()
         self._background_tasks: set[asyncio.Task] = set()
@@ -295,7 +303,11 @@ class CharactersTab(QWidget):
 
     @asyncSlot(int)
     async def _on_refresh_character(self, character_id: int) -> None:
-        """Refresh a single character's data using parallel endpoint updates."""
+        """Refresh a single character's data using parallel endpoint updates.
+
+        Single character refreshes do NOT create snapshot groups - they are lightweight
+        updates that don't affect the networth graph.
+        """
         # Create a cancel token for this operation
         self._cancel_token = CancelToken()
         self._refresh_in_progress = True
@@ -306,25 +318,8 @@ class CharactersTab(QWidget):
 
             self._signal_bus.status_message.emit(f"Refreshing character {char_name}...")
 
+            # Single character refreshes do NOT create snapshot groups
             snapshot_group_id = None
-            if self._networth_service is not None:
-                try:
-                    account_for_char = None
-                    if hasattr(self._settings, "get_account_for_character"):
-                        account_for_char = self._settings.get_account_for_character(
-                            character_id
-                        )
-                    snapshot_group_id = (
-                        await self._networth_service.create_snapshot_group(
-                            account_for_char, label="Manual refresh"
-                        )
-                    )
-                except Exception:
-                    logger.debug(
-                        "Unable to create snapshot group for character %s",
-                        character_id,
-                        exc_info=True,
-                    )
 
             # Run parallel endpoint updates
             results = await self._refresh_character_endpoints_parallel(
@@ -340,7 +335,7 @@ class CharactersTab(QWidget):
             successes = sum(1 for r in results if r is True)
             failures = sum(1 for r in results if isinstance(r, Exception))
 
-            # Persist networth snapshot first so UI picks up new values
+            # Persist networth snapshot without group ID
             if self._networth_service is not None:
                 try:
                     await self._networth_service.save_networth_snapshot(
@@ -534,9 +529,16 @@ class CharactersTab(QWidget):
                 try:
                     snapshot_group_id = (
                         await self._networth_service.create_snapshot_group(
-                            account_id, label="Account refresh"
+                            account_id,
+                            refresh_source="account",
+                            label="Account refresh",
                         )
                     )
+                    # Create PLEX snapshots for the account
+                    if snapshot_group_id and account_id:
+                        await self._create_account_plex_snapshots(
+                            [account_id], snapshot_group_id
+                        )
                 except Exception:
                     logger.debug(
                         "Unable to create snapshot group for account %s",
@@ -669,9 +671,23 @@ class CharactersTab(QWidget):
                 try:
                     snapshot_group_id = (
                         await self._networth_service.create_snapshot_group(
-                            None, label="Refresh all"
+                            None, refresh_source="refresh_all", label="Refresh all"
                         )
                     )
+                    # Create PLEX snapshots for all affected accounts
+                    if snapshot_group_id:
+                        account_ids = set()
+                        for character_id in character_ids:
+                            if hasattr(self._settings, "get_account_for_character"):
+                                account_id = self._settings.get_account_for_character(
+                                    character_id
+                                )
+                                if account_id:
+                                    account_ids.add(account_id)
+                        if account_ids:
+                            await self._create_account_plex_snapshots(
+                                list(account_ids), snapshot_group_id
+                            )
                 except Exception:
                     logger.debug(
                         "Unable to create snapshot group for refresh all",
@@ -831,6 +847,57 @@ class CharactersTab(QWidget):
         )
 
         return list(results)
+
+    async def _create_account_plex_snapshots(
+        self, account_ids: list[int] | None, snapshot_group_id: int
+    ) -> None:
+        """Create PLEX snapshots for specified accounts.
+
+        Args:
+            account_ids: List of account IDs (None = skip)
+            snapshot_group_id: Snapshot group to associate with
+        """
+        if not account_ids or not self._networth_service:
+            return
+
+        try:
+            for account_id in account_ids:
+                try:
+                    plex_units = 0
+                    plex_price = 0.0
+
+                    # Get PLEX units and price from settings
+                    if hasattr(self._settings, "get_account_plex_units"):
+                        plex_units = int(
+                            self._settings.get_account_plex_units(account_id) or 0
+                        )
+
+                    if plex_units > 0 and self._fuzzwork_provider:
+                        # Try to get PLEX price
+                        market_data = self._fuzzwork_provider.get_market_data(44992)
+                        if market_data and market_data.region_data:
+                            for region_data in market_data.region_data.values():
+                                if region_data.sell_stats:
+                                    plex_price = float(region_data.sell_stats.median)
+                                    break
+
+                    if plex_units > 0:
+                        await self._networth_service.save_account_plex_snapshot(
+                            account_id, plex_units, plex_price, snapshot_group_id
+                        )
+                        logger.debug(
+                            "Created PLEX snapshot for account %d in group %d",
+                            account_id,
+                            snapshot_group_id,
+                        )
+                except Exception:
+                    logger.debug(
+                        "Failed to create PLEX snapshot for account %d",
+                        account_id,
+                        exc_info=True,
+                    )
+        except Exception:
+            logger.debug("Failed to create account PLEX snapshots", exc_info=True)
 
     def _find_character_widget(self, character_id: int):
         """Find the character widget for a given character ID."""

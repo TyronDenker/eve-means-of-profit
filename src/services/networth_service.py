@@ -476,17 +476,29 @@ class NetWorthService:
         return options
 
     async def create_snapshot_group(
-        self, account_id: int | None = None, label: str | None = None
+        self,
+        account_id: int | None = None,
+        refresh_source: str | None = None,
+        label: str | None = None,
     ) -> int:
-        """Create a snapshot group to tie together concurrent snapshots."""
+        """Create a snapshot group to tie together concurrent snapshots.
+
+        Args:
+            account_id: Optional account ID (set for 'account' refresh source)
+            refresh_source: Type of refresh ('refresh_all', 'account', etc.)
+            label: Optional label for the group
+
+        Returns:
+            snapshot_group_id of the created group
+        """
 
         await self._ensure_schema()
         cursor = await self._repo.execute(
             """
-            INSERT INTO networth_snapshot_groups (account_id, created_at, label)
-            VALUES (?, ?, ?)
+            INSERT INTO networth_snapshot_groups (account_id, refresh_source, created_at, label)
+            VALUES (?, ?, ?, ?)
             """,
-            (account_id, datetime.now(UTC).isoformat(), label),
+            (account_id, refresh_source, datetime.now(UTC).isoformat(), label),
         )
         if cursor.lastrowid is None:
             raise RuntimeError("Failed to create snapshot group")
@@ -659,6 +671,34 @@ class NetWorthService:
                     "snapshot_time": None,
                 }
         return results
+
+    async def save_account_plex_snapshot(
+        self,
+        account_id: int,
+        plex_units: int,
+        plex_unit_price: float,
+        snapshot_group_id: int | None = None,
+    ) -> int:
+        """Save an account-level PLEX snapshot.
+
+        Args:
+            account_id: Account ID
+            plex_units: PLEX units in vault
+            plex_unit_price: Market price per PLEX unit
+            snapshot_group_id: Optional snapshot group to associate with
+
+        Returns:
+            plex_snapshot_id of the created snapshot
+        """
+        await self._ensure_schema()
+        return await networth.save_account_plex_snapshot(
+            self._repo,
+            account_id,
+            plex_units,
+            plex_unit_price,
+            snapshot_group_id,
+            snapshot_time=datetime.now(UTC),
+        )
 
     async def get_latest_networth(self, character_id: int) -> NetWorthSnapshot | None:
         """Get the most recent net worth snapshot for a character."""

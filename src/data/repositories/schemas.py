@@ -361,9 +361,8 @@ CREATE TABLE IF NOT EXISTS networth_snapshots (
     account_id INTEGER,
     snapshot_group_id INTEGER,
     snapshot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    refresh_source TEXT,
     total_asset_value REAL NOT NULL DEFAULT 0,
-    hangar_value REAL NOT NULL DEFAULT 0,
-    ship_value REAL NOT NULL DEFAULT 0,
     wallet_balance REAL NOT NULL DEFAULT 0,
     market_escrow REAL NOT NULL DEFAULT 0,
     market_sell_value REAL NOT NULL DEFAULT 0,
@@ -371,8 +370,7 @@ CREATE TABLE IF NOT EXISTS networth_snapshots (
     contract_value REAL NOT NULL DEFAULT 0,
     industry_job_value REAL NOT NULL DEFAULT 0,
     plex_vault REAL NOT NULL DEFAULT 0,
-    total_liquid REAL NOT NULL DEFAULT 0,
-    total_net_worth REAL NOT NULL DEFAULT 0
+    FOREIGN KEY (snapshot_group_id) REFERENCES networth_snapshot_groups(snapshot_group_id) ON DELETE SET NULL
 );
 """
 
@@ -383,39 +381,60 @@ CREATE INDEX IF NOT EXISTS idx_networth_group
 ON networth_snapshots(snapshot_group_id);
 CREATE INDEX IF NOT EXISTS idx_networth_account
 ON networth_snapshots(account_id);
+CREATE INDEX IF NOT EXISTS idx_networth_group_char
+ON networth_snapshots(snapshot_group_id, character_id);
 """
 
 CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE = """
 CREATE TABLE IF NOT EXISTS networth_snapshot_groups (
     snapshot_group_id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id INTEGER,
+    refresh_source TEXT,  -- 'refresh_all', 'account', 'character'
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    label TEXT
+    label TEXT,
+    refresh_source TEXT
 );
 """
 
-CREATE_NETWORTH_COMPONENTS_TABLE = """
-CREATE TABLE IF NOT EXISTS networth_components (
-    component_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    snapshot_id INTEGER NOT NULL,
+CREATE_ACCOUNT_PLEX_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS account_plex_snapshots (
+    plex_snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    snapshot_group_id INTEGER,
+    snapshot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    plex_units INTEGER NOT NULL DEFAULT 0,
+    plex_unit_price REAL NOT NULL DEFAULT 0.0,
+    plex_total_value REAL NOT NULL DEFAULT 0.0,
+    FOREIGN KEY (snapshot_group_id) REFERENCES networth_snapshot_groups(snapshot_group_id) ON DELETE SET NULL
+);
+"""
+
+CREATE_ACCOUNT_PLEX_SNAPSHOTS_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_account_plex_account_time
+ON account_plex_snapshots(account_id, snapshot_time DESC);
+CREATE INDEX IF NOT EXISTS idx_account_plex_group
+ON account_plex_snapshots(snapshot_group_id);
+"""
+
+CREATE_CHARACTER_LIFECYCLE_TABLE = """
+CREATE TABLE IF NOT EXISTS character_lifecycle (
+    lifecycle_id INTEGER PRIMARY KEY AUTOINCREMENT,
     character_id INTEGER NOT NULL,
-    component_type TEXT NOT NULL CHECK(component_type IN ('asset', 'wallet', 'order', 'contract', 'job')),
-    component_ref_id INTEGER,
-    type_id INTEGER,
-    quantity INTEGER NOT NULL DEFAULT 0,
-    unit_value REAL NOT NULL DEFAULT 0,
-    total_value REAL NOT NULL DEFAULT 0,
-    notes TEXT,
-    FOREIGN KEY (snapshot_id) REFERENCES networth_snapshots(snapshot_id) ON DELETE CASCADE
+    account_id INTEGER,
+    event_type TEXT NOT NULL CHECK(event_type IN ('added', 'removed', 'account_changed')),
+    event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    metadata TEXT
 );
 """
 
-CREATE_NETWORTH_COMPONENTS_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_networth_components_snapshot
-ON networth_components(snapshot_id);
+CREATE_CHARACTER_LIFECYCLE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_character_lifecycle_char
+ON character_lifecycle(character_id, event_time);
+"""
 
-CREATE INDEX IF NOT EXISTS idx_networth_components_type
-ON networth_components(component_type);
+CREATE_CHARACTER_LIFECYCLE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_character_lifecycle_char
+ON character_lifecycle(character_id, event_time);
 """
 
 # All table creation statements in order
@@ -445,19 +464,43 @@ ALL_TABLES = [
     CREATE_NETWORTH_SNAPSHOTS_TABLE,
     CREATE_NETWORTH_SNAPSHOTS_INDEXES,
     CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE,
+    CREATE_ACCOUNT_PLEX_SNAPSHOTS_TABLE,
+    CREATE_ACCOUNT_PLEX_SNAPSHOTS_INDEXES,
+    CREATE_CHARACTER_LIFECYCLE_TABLE,
+    CREATE_CHARACTER_LIFECYCLE_INDEXES,
 ]
 
 __all__ = [
     "ALL_TABLES",
+    "CREATE_ACCOUNT_PLEX_SNAPSHOTS_INDEXES",
+    "CREATE_ACCOUNT_PLEX_SNAPSHOTS_TABLE",
     "CREATE_ASSET_CHANGES_INDEXES",
     "CREATE_ASSET_CHANGES_TABLE",
     "CREATE_ASSET_SNAPSHOTS_INDEX",
     "CREATE_ASSET_SNAPSHOTS_TABLE",
+    "CREATE_CHARACTER_LIFECYCLE_INDEXES",
+    "CREATE_CHARACTER_LIFECYCLE_TABLE",
+    "CREATE_CONTRACTS_INDEXES",
+    "CREATE_CONTRACTS_TABLE",
+    "CREATE_CONTRACT_ITEMS_INDEXES",
+    "CREATE_CONTRACT_ITEMS_TABLE",
     "CREATE_CURRENT_ASSETS_INDEXES",
     "CREATE_CURRENT_ASSETS_TABLE",
+    "CREATE_CUSTOM_PRICES_INDEXES",
+    "CREATE_CUSTOM_PRICES_TABLE",
+    "CREATE_INDUSTRY_JOBS_INDEXES",
+    "CREATE_INDUSTRY_JOBS_TABLE",
+    "CREATE_MARKET_ORDERS_INDEXES",
+    "CREATE_MARKET_ORDERS_TABLE",
+    "CREATE_NETWORTH_SNAPSHOTS_INDEXES",
+    "CREATE_NETWORTH_SNAPSHOTS_TABLE",
     "CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE",
     "CREATE_PRICE_HISTORY_INDEXES",
     "CREATE_PRICE_HISTORY_TABLE",
     "CREATE_PRICE_SNAPSHOTS_INDEX",
     "CREATE_PRICE_SNAPSHOTS_TABLE",
+    "CREATE_WALLET_JOURNAL_INDEXES",
+    "CREATE_WALLET_JOURNAL_TABLE",
+    "CREATE_WALLET_TRANSACTIONS_INDEXES",
+    "CREATE_WALLET_TRANSACTIONS_TABLE",
 ]

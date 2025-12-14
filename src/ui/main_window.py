@@ -209,9 +209,10 @@ class MainWindow(QMainWindow):
                     location_service=self._location_service,
                 )
 
-                # Update the CharactersTab with the networth_service
+                # Update the CharactersTab with the networth_service and fuzzwork_provider
                 if hasattr(self, "characters_tab") and self.characters_tab:
                     self.characters_tab._networth_service = self._networth_service
+                    self.characters_tab._fuzzwork_provider = self._fuzzwork_provider
 
                 # Update the AssetsTab with the fuzzwork_provider
                 if hasattr(self, "assets_tab") and self.assets_tab:
