@@ -11,8 +11,7 @@ Output:
     dist/EVE Means of Profit.exe (single executable file)
     
 Runtime:
-    Place the 'data' folder beside the .exe file. The application will
-    automatically look for it at runtime via user_data_dir logic.
+    The application will automatically look for it at runtime via user_data_dir logic.
 """
 
 from pathlib import Path
@@ -23,19 +22,22 @@ block_cipher = None
 # Project root directory
 project_root = Path.cwd()
 
-# === Data Files Configuration ===
-# No data files bundled - data folder should be placed beside the executable
-
 datas = []
 
-# Bundle only pyproject.toml for metadata extraction (used in config.py)
+# Bundle pyproject.toml for metadata extraction (used in config.py)
 pyproject_file = project_root / 'pyproject.toml'
 if pyproject_file.exists():
     datas.append((str(pyproject_file), '.'))
 
-# Note: The 'data' folder should be placed beside the executable at runtime.
-# The application will automatically look for and create this folder via
-# user_data_dir logic in config.py when frozen (next to the .exe file).
+# Bundle data folder with .env.default and other default data
+# This ensures .env.default is available in frozen (PyInstaller) bundles
+data_folder = project_root / 'data'
+if data_folder.exists():
+    datas.append((str(data_folder), 'data'))
+
+# Note: The 'data' folder in the bundle will be placed beside the executable at runtime.
+# The application will automatically use it via user_data_dir logic in config.py
+# when frozen (next to the .exe file).
 
 
 # === Hidden Imports Configuration ===

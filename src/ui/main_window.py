@@ -28,7 +28,7 @@ from ui.signal_bus import get_signal_bus
 from ui.tabs import AssetsTab, CharactersTab, NetworthTab
 from ui.widgets import ProgressWidget
 from utils import global_config
-from utils.progress_callback import ProgressUpdate
+from utils.progress_callback import ProgressPhase, ProgressUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,9 @@ class MainWindow(QMainWindow):
         # NetWorthService initialized after fuzzwork_provider is ready
         self._networth_service: NetWorthService | None = None
 
+        # Set up progress callback for SDE client
+        self._sde_client.progress_callback = self._on_sde_progress
+
         self.setWindowTitle(f"{global_config.app.name} v{global_config.app.version}")
         # Use settings manager for window size if available, else fallback
         window_size = (
@@ -88,6 +91,7 @@ class MainWindow(QMainWindow):
     async def initialize_async(self):
         """Three-phase async initialization for fast startup.
 
+        Phase 0: Initialize critical data (SDE)
         Phase 1: Show cached data immediately (< 500ms)
         Phase 2: Start background updates (non-blocking)
         Phase 3: Data completes incrementally as background tasks finish
@@ -95,6 +99,14 @@ class MainWindow(QMainWindow):
         import time
 
         start_time = time.time()
+        logger.info("PHASE 0 START - Initializing SDE")
+
+        # PHASE 0: Initialize SDE (critical for other services)
+        await self._phase0_initialize_sde()
+
+        phase0_time = time.time() - start_time
+        logger.info("PHASE 0 COMPLETE: %.2fs - SDE initialized", phase0_time)
+
         logger.info("PHASE 1 START - Loading cached data")
 
         # PHASE 1: Show cached data immediately
@@ -109,6 +121,38 @@ class MainWindow(QMainWindow):
         logger.info("PHASE 2 START - Starting background updates")
         await self._phase2_start_background_updates()
         logger.info("PHASE 2 STARTED - Background tasks running")
+
+        # Enable tabs after all initialization is complete
+        self.tab_widget.setEnabled(True)
+
+    async def _phase0_initialize_sde(self) -> None:
+        """Initialize SDE provider - critical for other services.
+
+        SDE must be initialized before Phase 1 because LocationService,
+        AssetService, and other data-dependent services require it.
+        """
+        try:
+            # Check if SDE files exist, download if needed
+            sde_files = list(self._sde_client.sde_dir.glob("*.jsonl"))
+            if not sde_files:
+                logger.info("SDE files not found - downloading initial SDE...")
+
+                # Download latest SDE (progress shown via callback)
+                success = await self._sde_client.download_sde()
+
+                if not success:
+                    logger.error("Failed to download initial SDE")
+                    # Continue anyway - let services handle gracefully
+                    return
+
+            logger.info("Initializing SDE provider...")
+            await self._sde_provider.initialize_async()
+            logger.info("SDE provider initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize SDE: {e}", exc_info=True)
+            if hasattr(self, "_progress_widget"):
+                self._progress_widget.error("SDE initialization failed")
+            # Continue anyway - services will handle missing SDE gracefully
 
     async def _phase1_show_cached_data(self):
         """Initialize cached data only - no network calls.
@@ -138,6 +182,7 @@ class MainWindow(QMainWindow):
         """Start non-blocking async tasks for background updates.
 
         These tasks run in background without blocking UI interaction.
+        SDE is already initialized in Phase 0 before this runs.
         """
         # 1. Check for SDE updates (quick check, download if needed)
         sde_update_task = asyncio.ensure_future(self._check_sde_updates())
@@ -319,6 +364,9 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         central_layout.addWidget(self.tab_widget)
 
+        # Disable tabs initially (will be enabled after SDE init)
+        self.tab_widget.setEnabled(False)
+
         self.setCentralWidget(central_widget)
 
         # Create characters tab
@@ -439,6 +487,31 @@ class MainWindow(QMainWindow):
         self._progress_widget.complete("Cancelled")
         logger.info("Background operation cancelled by user")
 
+    def _on_sde_progress(self, update: ProgressUpdate) -> None:
+        """Handle SDE progress updates.
+
+        Args:
+            update: Progress update from SDE client/provider
+        """
+        if hasattr(self, "_progress_widget"):
+            message = update.message
+            if update.detail:
+                message = f"{update.message} - {update.detail}"
+
+            # Initialize progress widget only on STARTING phase
+            if update.phase == ProgressPhase.STARTING:
+                total = int(update.total) if update.total > 0 else 100
+                self._progress_widget.start_operation(message, total=total)
+            elif update.phase == ProgressPhase.COMPLETE:
+                self._progress_widget.complete(message)
+            elif update.phase == ProgressPhase.ERROR:
+                self._progress_widget.error(message)
+            else:
+                # FETCHING, PROCESSING, SAVING phases - update progress
+                # Ensure current is an integer for setValue()
+                current_value = int(update.current)
+                self._progress_widget.update_progress(current_value, message)
+
     def _on_add_character(self) -> None:
         """Handle add character action."""
         dialog = AuthDialog(self._character_service, self)
@@ -464,18 +537,16 @@ class MainWindow(QMainWindow):
         <p>A fully featured EVE Online tool for asset tracking, manufacturing and trading analysis.</p>
 
         <p><b>Contact & Community:</b></p>
-        <ul>
         """
         # Discord invite at the top
         if global_config.app.contact_discord_invite:
-            about_text += f"<li>Join our <a href='{global_config.app.contact_discord_invite}'>Discord community</a> for support, updates, and discussion!</li>"
+            about_text += f"<p>• Join our <a href='{global_config.app.contact_discord_invite}'>Discord community</a> for support, updates, and discussion!</p>"
         if global_config.app.contact_github:
-            about_text += f"<li>Project on <a href='{global_config.app.contact_github}'>GitHub</a></li>"
+            about_text += f"<p>• Project on <a href='{global_config.app.contact_github}'>GitHub</a></p>"
         if global_config.app.contact_discord:
-            about_text += f"<li>Discord: {global_config.app.contact_discord}</li>"
+            about_text += f"<p>• Discord: {global_config.app.contact_discord}</p>"
         if global_config.app.contact_eve:
-            about_text += f"<li>EVE: {global_config.app.contact_eve}</li>"
-        about_text += "</ul>"
+            about_text += f"<p>• EVE: {global_config.app.contact_eve}</p>"
 
         about_text += """
         <hr>
@@ -491,7 +562,7 @@ class MainWindow(QMainWindow):
         referrals = global_config.app.referrals
         creator_name = global_config.app.contact_eve or "Tyron Denker"
         if referrals or creator_name:
-            about_text += "<b>Support & Referral Options:</b><ul>"
+            about_text += "<p><b>Support & Referral Options:</b></p>"
             # Compact Markee Dragon affiliate links and codes into a single item
             markee_link = referrals.get("markee_link")
             markee_code_1 = referrals.get("markee_code_1")
@@ -505,14 +576,13 @@ class MainWindow(QMainWindow):
                 if markee_code_2:
                     codes.append(f"<b>{markee_code_2}</b>")
                 codes_str = " or ".join(codes) if codes else ""
-                about_text += f"<li>Shop at <a href='{markee_link}'>Markee Dragon Store</a> (affiliate, 3% discount with code {codes_str})</li>"
+                about_text += f"<p>• Shop at <a href='{markee_link}'>Markee Dragon Store</a> (affiliate, 3% discount with code {codes_str})</p>"
             # EVE referral
             if eve_referral:
-                about_text += f"<li>Sign up for EVE Online with <a href='{eve_referral}'>this referral link</a> for an extra 1M skill points.</li>"
+                about_text += f"<p>• Sign up for EVE Online with <a href='{eve_referral}'>this referral link</a> for an extra 1M skill points.</p>"
             # Add ISK donation option in the same list
             if creator_name:
-                about_text += f"<li><b>Support the creator in-game!</b> ISK Donations are more than welcome to <b>{creator_name}</b> in EVE Online. </li>"
-            about_text += "</ul>"
+                about_text += f"<p>• <b>Support the creator in-game!</b> ISK Donations are more than welcome to <b>{creator_name}</b> in EVE Online. </p>"
 
         about_text += """
         <hr><p>EVE Means of Profit is and always will be free and open source.<br>

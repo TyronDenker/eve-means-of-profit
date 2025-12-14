@@ -163,8 +163,13 @@ class ProgressWidget(QWidget):
             current: Current progress value.
             message: Optional status message to display.
         """
+        # Ensure current is an integer
+        current = int(current)
+
         if self._progress_bar.maximum() > 0:
-            self._progress_bar.setValue(min(current, self._progress_bar.maximum()))
+            # Cap the value at maximum to avoid errors
+            value = min(current, self._progress_bar.maximum())
+            self._progress_bar.setValue(value)
 
         if message:
             self._status_label.setText(message)

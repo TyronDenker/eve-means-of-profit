@@ -375,6 +375,9 @@ class SDEJsonlParser:
 
         """
         file_path = self.file_path / filename
+        if not file_path.exists():
+            logger.debug("Skipping missing SDE file: %s", file_path)
+            return
         parser = JSONLParser(file_path)
         yield from parser.parse()
 

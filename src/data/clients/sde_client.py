@@ -159,18 +159,43 @@ class SDEClient:
         current_metadata = self.load_metadata()
         current_build = current_metadata.build_id if current_metadata else None
 
+        # Check if SDE files actually exist in the directory
+        sde_files = list(self.sde_dir.glob("*.jsonl"))
+        sde_files_exist = len(sde_files) > 0
+
         try:
             latest_build = await self._fetch_latest_build_id()
-            needs_update = current_build is None or latest_build != current_build
+
+            # SDE needs update if:
+            # 1. No metadata exists (never downloaded), OR
+            # 2. Build ID doesn't match latest, OR
+            # 3. Metadata exists but SDE files are missing (corrupted/deleted)
+            needs_update = (
+                current_build is None
+                or latest_build != current_build
+                or (current_build and not sde_files_exist)
+            )
 
             if needs_update:
-                logger.info(f"SDE update available: {current_build} -> {latest_build}")
+                if not sde_files_exist and current_build:
+                    logger.warning(
+                        f"SDE files missing for build {current_build}; "
+                        f"will download {latest_build}"
+                    )
+                else:
+                    logger.info(
+                        f"SDE update available: {current_build} -> {latest_build}"
+                    )
             else:
                 logger.debug(f"SDE is up to date: {current_build}")
 
             return needs_update, latest_build
         except Exception as e:
             logger.error(f"Failed to check for SDE updates: {e}")
+            # If we can't check, but SDE files are missing, trigger a download
+            if not sde_files_exist:
+                logger.warning("Could not check SDE updates and SDE files are missing")
+                return True, None
             return False, None
 
     async def _fetch_latest_build_id(self) -> str:
@@ -226,25 +251,54 @@ class SDEClient:
             try:
                 self._emit_progress(
                     ProgressPhase.FETCHING,
-                    10,
+                    0,
                     100,
                     "Downloading SDE archive...",
                 )
-                response = await self._retry_request(
-                    client, "GET", download_url, max_retries=3
-                )
-                response.raise_for_status()
+
+                async with client.stream("GET", download_url) as response:
+                    response.raise_for_status()
+                    total_bytes = int(response.headers.get("Content-Length", 0))
+                    downloaded_bytes = 0
+                    archive_bytes = bytearray()
+
+                    async for chunk in response.aiter_bytes(64 * 1024):
+                        archive_bytes.extend(chunk)
+                        downloaded_bytes += len(chunk)
+                        progress = (
+                            int(downloaded_bytes * 100 / total_bytes)
+                            if total_bytes > 0
+                            else 0
+                        )
+                        detail = (
+                            f"{downloaded_bytes / (1024 * 1024):.1f}/{total_bytes / (1024 * 1024):.1f} MB"
+                            if total_bytes > 0
+                            else f"{downloaded_bytes / (1024 * 1024):.1f} MB"
+                        )
+                        self._emit_progress(
+                            ProgressPhase.FETCHING,
+                            min(progress, 100),
+                            100,
+                            "Downloading SDE archive...",
+                            detail=detail,
+                        )
+
+                archive_bytes = bytes(archive_bytes)
+                total_size_mb = len(archive_bytes) / (1024 * 1024)
+
                 self._emit_progress(
                     ProgressPhase.PROCESSING,
                     50,
                     100,
-                    "Extracting SDE files...",
+                    f"Extracting SDE files... ({total_size_mb:.1f} MB)",
                 )
-                with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+                with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
                     members = [m for m in zf.namelist() if m.endswith(".jsonl")]
                     total = len(members)
+                    extracted_size_mb = 0
                     for idx, member in enumerate(members):
                         file_data = zf.read(member)
+                        extracted_size_mb += len(file_data) / (1024 * 1024)
                         output_path = self.sde_dir / member.split("/")[-1]
                         temp_path = output_path.with_suffix(".tmp")
                         temp_path.write_bytes(file_data)
@@ -255,9 +309,11 @@ class SDEClient:
                                 ProgressPhase.PROCESSING,
                                 progress,
                                 100,
-                                f"Extracted {idx + 1}/{total} files...",
+                                f"Extracted {idx + 1}/{total} files... ({extracted_size_mb:.1f}/{total_size_mb:.1f} MB)",
                             )
-                logger.info(f"Extracted {len(members)} SDE files")
+                logger.info(
+                    f"Extracted {len(members)} SDE files ({extracted_size_mb:.1f} MB)"
+                )
             except Exception as e:
                 raise SDEDownloadError(f"Failed to download/extract SDE: {e}") from e
 

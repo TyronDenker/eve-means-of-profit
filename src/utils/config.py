@@ -237,7 +237,7 @@ class ESIConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="ESI_",
-        env_file=".env",
+        env_file=(".env", "data/.env.default"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -324,7 +324,7 @@ class SDEConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="SDE_",
-        env_file=".env",
+        env_file=(".env", "data/.env.default"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -408,7 +408,7 @@ class AppConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="APP_",
-        env_file=".env",
+        env_file=(".env", "data/.env.default"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -505,8 +505,13 @@ class Config:
         self._update_env_example()
 
     def _update_env_example(self) -> None:
-        """Update .env.example with current default values."""
-        env_example_path = self.app.project_root / ".env.example"
+        """Update .env.default in data/ with current default values.
+
+        The .env.default file is placed in the data/ folder so it's bundled
+        with the executable and can be found reliably in both development
+        and frozen (PyInstaller) environments.
+        """
+        env_default_path = self.app.user_data_dir / ".env.default"
 
         # Generate example content from all config sections
         lines = [
@@ -597,30 +602,15 @@ class Config:
             lines.append(f"# {env_var}={default}")
             lines.append("")
 
-        # Write to file. Try the preferred location first; if that fails and
-        # we weren't already targeting project_root, attempt a fallback to
-        # project_root so the example is created where the developer expects
-        # it.
+        # Write to file. data/ should always be writable in both dev and bundled modes.
         content = "\n".join(lines)
         try:
-            env_example_path.parent.mkdir(parents=True, exist_ok=True)
-            env_example_path.write_text(content, encoding="utf-8")
-            return
-        except Exception as first_exc:
+            env_default_path.parent.mkdir(parents=True, exist_ok=True)
+            env_default_path.write_text(content, encoding="utf-8")
+            logger.debug(f"Updated .env.default in {env_default_path}")
+        except Exception as exc:
             logger.warning(
-                f"Could not write .env.example to {env_example_path}: {first_exc}"
-            )
-
-        # If we tried user_data_dir and failed, try project root as a final
-        # fallback (don't re-raise; this is non-fatal).
-        try:
-            fallback_path = Path(__file__).parent.parent.parent / ".env.example"
-            fallback_path.parent.mkdir(parents=True, exist_ok=True)
-            fallback_path.write_text(content, encoding="utf-8")
-            logger.info(f"Wrote fallback .env.example to {fallback_path}")
-        except Exception as final_exc:
-            logger.warning(
-                f"Could not update .env.example in fallback location: {final_exc}"
+                f"Could not update .env.default in {env_default_path}: {exc}"
             )
 
     def reload(self) -> None:
