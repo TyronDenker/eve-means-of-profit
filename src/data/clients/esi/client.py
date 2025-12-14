@@ -67,22 +67,11 @@ def _load_openapi_blocking(url_or_path: str) -> OpenAPI:
         # Check if this is a local file path
         path = Path(url_or_path)
         if path.exists() and path.is_file():
-            # For local files, try using a file:// URI first so tests that patch
-            # OpenAPI.load_async receive a clear URL. Some environments (httpx)
-            # do not support the file:// scheme and raise UnsupportedProtocol.
-            # In that case, fall back to passing the raw filesystem path which
-            # aiopenapi3 can also handle.
             file_url = path.resolve().as_uri()
             file_path = str(path.resolve())
             logger.debug("Loading OpenAPI spec from local file via URL: %s", file_url)
             try:
-                # Suppress Pydantic UnsupportedFieldAttributeWarning that can
-                # be emitted while aiopenapi3/pydantic generates models from
-                # OpenAPI schemas. This warning is noisy and harmless for
-                # our runtime (it indicates a Field(...) default was provided
-                # in a context where schema generation ignores it). We scope the
-                # suppression tightly to the load call to avoid hiding other
-                # warnings project-wide.
+                # Always use aiopenapi3's file loader for file:// URLs
                 with warnings.catch_warnings():
                     warnings.filterwarnings(
                         "ignore",
@@ -90,38 +79,27 @@ def _load_openapi_blocking(url_or_path: str) -> OpenAPI:
                         module=r"pydantic\._internal\._generate_schema",
                     )
                     return loop.run_until_complete(OpenAPI.load_async(file_url))
-            except Exception as e:
-                # Some transports (httpx) don't support file:// URLs; instead of
-                # calling load_async again (which may route to httpx again),
-                # read the file and construct an OpenAPI object directly from
-                # the loaded JSON document. This avoids re-entering network
-                # code paths while preserving a correct OpenAPI instance.
-                if isinstance(e, Exception) and (
-                    isinstance(e, httpx.UnsupportedProtocol)
-                    or e.__class__.__name__ == "UnsupportedProtocol"
-                ):
-                    logger.debug(
-                        "file:// unsupported by transport, constructing OpenAPI from local file: %s",
-                        file_path,
-                    )
-                    try:
-                        txt = path.read_text(encoding="utf-8")
-                        spec_data = json.loads(txt)
-                        # Construct OpenAPI object synchronously from parsed dict
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings(
-                                "ignore",
-                                message="The 'default' attribute with value",
-                                module=r"pydantic\._internal\._generate_schema",
-                            )
-                            return OpenAPI(file_url, spec_data)
-                    except Exception:
-                        logger.exception(
-                            "Failed to construct OpenAPI from local file: %s", file_path
+            except Exception:
+                # Fallback: read the file and construct OpenAPI from dict
+                logger.debug(
+                    "file:// failed, constructing OpenAPI from local file: %s",
+                    file_path,
+                )
+                try:
+                    txt = path.read_text(encoding="utf-8")
+                    spec_data = json.loads(txt)
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings(
+                            "ignore",
+                            message="The 'default' attribute with value",
+                            module=r"pydantic\._internal\._generate_schema",
                         )
-                        raise
-                # Re-raise unexpected exceptions
-                raise
+                        return OpenAPI(file_url, spec_data)
+                except Exception:
+                    logger.exception(
+                        "Failed to construct OpenAPI from local file: %s", file_path
+                    )
+                    raise
 
         # For URLs, use async loading. Suppress the specific pydantic
         # UnsupportedFieldAttributeWarning during schema generation which
