@@ -151,7 +151,7 @@ class CharacterManagerSettings(BaseModel):
         description="Font size for networth data (px)",
     )
     portrait_size: int = Field(
-        default=1024,
+        default=128,
         description="Character portrait size in pixels (64, 96, 128, 192, 256, 512, 1024)",
     )
     sidebar_visible: bool = Field(
@@ -730,6 +730,21 @@ class SettingsManager:
             except Exception:
                 continue
         return out
+
+    def get_account_name(self, account_id: int) -> str | None:
+        """Get the display name for an account.
+
+        Args:
+            account_id: Numeric account identifier
+
+        Returns:
+            Account name or None if not set
+        """
+        acc = self._settings.accounts.get(str(account_id))
+        if not acc:
+            return None
+        name = acc.get("name")
+        return str(name) if name else None
 
     def set_account(self, account_id: int, name: str | None = None) -> None:
         """Create or update an account name.

@@ -10,6 +10,7 @@ class EveMarketGroup(BaseModel):
         ...,
         ge=2,
         description="The unique identifier for the Eve market group.",
+        alias="id",
     )
     description: str | None = Field(
         None, description="A description of the market group."
