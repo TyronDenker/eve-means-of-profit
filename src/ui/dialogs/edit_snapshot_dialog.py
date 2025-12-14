@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
@@ -32,6 +33,7 @@ class EditSnapshotDialog(QDialog):
         parent=None,
         characters: list[CharacterInfo] | None = None,
         snapshots_by_character: dict[int, NetWorthSnapshot] | None = None,
+        group_metadata: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.snapshot = snapshot
@@ -40,11 +42,11 @@ class EditSnapshotDialog(QDialog):
         self._character_map: dict[int, str] = {}  # character_id -> character_name
         # Map of character_id -> snapshot for that character at the same time
         self._snapshots_by_character = snapshots_by_character or {}
-        self.setWindowTitle(
-            f"Edit Snapshot - {snapshot.snapshot_time.strftime('%Y-%m-%d %H:%M')}"
-        )
+        self._group_metadata = group_metadata or {}
+        
+        self.setWindowTitle("Edit Snapshot")
         self.setModal(True)
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(450)
 
         self._setup_ui()
 
@@ -57,6 +59,40 @@ class EditSnapshotDialog(QDialog):
             name = getattr(char, "character_name", None)
             if cid is not None and name is not None:
                 self._character_map[cid] = name
+
+        # Get snapshot source info
+        refresh_source = self._group_metadata.get("refresh_source", "unknown")
+        account_id = self._group_metadata.get("account_id")
+        snapshot_time = self.snapshot.snapshot_time
+        
+        # Get account name if available
+        account_name = None
+        try:
+            from utils.settings_manager import get_settings_manager
+            settings = get_settings_manager()
+            if account_id:
+                account_name = settings.get_account_name(account_id)
+        except Exception:
+            pass
+
+        # Build source display
+        if refresh_source == "refresh_all":
+            source_display = "Refresh All"
+        elif refresh_source == "account":
+            source_display = account_name if account_name else f"Account {account_id}"
+        elif refresh_source == "character":
+            source_display = "Single Character"
+        else:
+            source_display = refresh_source
+
+        # Header with source and time
+        header_label = QLabel(
+            f"<h3>Datapoint: {source_display}</h3>"
+            f"<b>Time:</b> {snapshot_time.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+        )
+        header_label.setStyleSheet(f"color: {COLORS.TEXT_PRIMARY}; padding: 10px;")
+        header_label.setWordWrap(True)
+        layout.addWidget(header_label)
 
         # Character selector (if multiple characters available)
         if self._characters:
@@ -71,7 +107,20 @@ class EditSnapshotDialog(QDialog):
                 cid = getattr(char, "character_id", None)
                 name = getattr(char, "character_name", str(cid))
                 if cid is not None:
-                    self.character_combo.addItem(name, cid)
+                    # Check if this character's snapshot is from the same group or older
+                    char_snapshot = self._snapshots_by_character.get(cid)
+                    age_suffix = ""
+                    if char_snapshot and hasattr(char_snapshot, "snapshot_time"):
+                        time_diff = snapshot_time - char_snapshot.snapshot_time
+                        if time_diff.total_seconds() > 60:  # More than 1 minute old
+                            hours = int(time_diff.total_seconds() / 3600)
+                            minutes = int((time_diff.total_seconds() % 3600) / 60)
+                            if hours > 0:
+                                age_suffix = f" ({hours}h {minutes}m old)"
+                            else:
+                                age_suffix = f" ({minutes}m old)"
+                    
+                    self.character_combo.addItem(f"{name}{age_suffix}", cid)
 
             # Pre-select the snapshot's character
             for i in range(self.character_combo.count()):
@@ -87,48 +136,6 @@ class EditSnapshotDialog(QDialog):
             self.character_combo.currentIndexChanged.connect(self._on_character_changed)
         else:
             self.character_combo = None
-
-        # Get character display name
-        char_display = self._character_map.get(
-            self.snapshot.character_id, str(self.snapshot.character_id)
-        )
-
-        # Context info section with detailed timing and source information
-        context_lines = [
-            f"<b>Character:</b> {char_display}",
-            f"<b>Snapshot Time:</b> {self.snapshot.snapshot_time.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        ]
-
-        # Add snapshot group info if available
-        if self.snapshot.snapshot_group_id:
-            context_lines.append(
-                f"<b>Snapshot Group ID:</b> {self.snapshot.snapshot_group_id}"
-            )
-
-        # Add account info if available
-        if self.snapshot.account_id:
-            context_lines.append(f"<b>Account ID:</b> {self.snapshot.account_id}")
-
-        # Determine snapshot source based on group and account info
-        source = "Unknown"
-        if self.snapshot.snapshot_group_id:
-            if self.snapshot.account_id is None:
-                source = "Refresh All (grouped)"
-            else:
-                source = f"Refresh Account {self.snapshot.account_id} (grouped)"
-        else:
-            if self.snapshot.account_id:
-                source = f"Character (Account {self.snapshot.account_id})"
-            else:
-                source = "Character (standalone)"
-
-        context_lines.append(f"<b>Source:</b> {source}")
-
-        # Build the info label with all context
-        info_label = QLabel("<br>".join(context_lines))
-        info_label.setStyleSheet(AppStyles.LABEL_INFO)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
 
         # Form for editing values
         form = QFormLayout()
@@ -189,17 +196,20 @@ class EditSnapshotDialog(QDialog):
         self.industry_spin.setStyleSheet(AppStyles.DOUBLE_SPINBOX)
         form.addRow("Industry Jobs:", self.industry_spin)
 
-        self.plex_spin = QDoubleSpinBox()
-        self.plex_spin.setRange(0, 1e15)
-        self.plex_spin.setDecimals(2)
-        self.plex_spin.setValue(self.snapshot.plex_vault)
-        self.plex_spin.setSuffix(" ISK")
-        self.plex_spin.setStyleSheet(AppStyles.DOUBLE_SPINBOX)
-        form.addRow("PLEX Vault:", self.plex_spin)
-
         layout.addLayout(form)
 
-        # Total display
+        # PLEX section (account-level, separate from character data)
+        plex_label = QLabel("<b>Account PLEX</b> (separate from character data)")
+        plex_label.setStyleSheet(f"color: {COLORS.TEXT_SECONDARY}; margin-top: 10px;")
+        layout.addWidget(plex_label)
+
+        # TODO: Add PLEX account selector and value editor
+        # For now, add a note
+        plex_note = QLabel("PLEX editing not yet implemented - use account manager")
+        plex_note.setStyleSheet(f"color: {COLORS.TEXT_MUTED}; font-style: italic; margin-bottom: 10px;")
+        layout.addWidget(plex_note)
+
+        # Total display (character data only, PLEX is separate)
         self.total_label = QLabel()
         self.total_label.setStyleSheet(
             f"font-weight: bold; font-size: 14pt; color: {COLORS.TEXT_PRIMARY};"
@@ -217,7 +227,6 @@ class EditSnapshotDialog(QDialog):
             self.collateral_spin,
             self.contract_spin,
             self.industry_spin,
-            self.plex_spin,
         ]:
             spin.valueChanged.connect(self._update_total)
 
@@ -236,7 +245,7 @@ class EditSnapshotDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _update_total(self) -> None:
-        """Update the total display."""
+        """Update the total display (character data only)."""
         total = (
             self.wallet_spin.value()
             + self.assets_spin.value()
@@ -245,9 +254,8 @@ class EditSnapshotDialog(QDialog):
             + self.collateral_spin.value()
             + self.contract_spin.value()
             + self.industry_spin.value()
-            + self.plex_spin.value()
         )
-        self.total_label.setText(f"Total Net Worth: {total:,.2f} ISK")
+        self.total_label.setText(f"Character Total: {total:,.2f} ISK")
 
     def get_selected_character_id(self) -> int:
         """Get the currently selected character ID from the dropdown."""
@@ -283,7 +291,6 @@ class EditSnapshotDialog(QDialog):
             self.collateral_spin,
             self.contract_spin,
             self.industry_spin,
-            self.plex_spin,
         ]:
             spinbox.blockSignals(True)
 
@@ -294,7 +301,6 @@ class EditSnapshotDialog(QDialog):
         self.collateral_spin.setValue(snap.contract_collateral)
         self.contract_spin.setValue(snap.contract_value)
         self.industry_spin.setValue(snap.industry_job_value)
-        self.plex_spin.setValue(snap.plex_vault)
 
         # Unblock signals
         for spinbox in [
@@ -305,7 +311,6 @@ class EditSnapshotDialog(QDialog):
             self.collateral_spin,
             self.contract_spin,
             self.industry_spin,
-            self.plex_spin,
         ]:
             spinbox.blockSignals(False)
 
@@ -330,5 +335,5 @@ class EditSnapshotDialog(QDialog):
             contract_collateral=self.collateral_spin.value(),
             contract_value=self.contract_spin.value(),
             industry_job_value=self.industry_spin.value(),
-            plex_vault=self.plex_spin.value(),
+            plex_vault=0.0,  # PLEX is account-level, not character-level
         )

@@ -916,6 +916,9 @@ class GraphStyles:
 
         Returns:
             List of (field_name, display_label) tuples
+
+        Note: PLEX is now tracked at account level via account_plex_snapshots,
+              not in character snapshots.
         """
         return [
             ("wallet_balance", "Wallet"),
@@ -925,5 +928,5 @@ class GraphStyles:
             ("contract_collateral", "Contract Collateral"),
             ("contract_value", "Contracts"),
             ("industry_job_value", "Industry"),
-            ("plex_vault", "PLEX"),
+            # plex_vault removed - PLEX is now account-level data
         ]

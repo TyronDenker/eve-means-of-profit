@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 from qasync import asyncSlot
 
-from models.app import AssetLocationOption
+from models.app import AssetLocationOption, NetWorthSnapshot
 from services.character_service import CharacterService
 from services.networth_service import NetWorthService
 from ui.dialogs.select_asset_locations_dialog import SelectAssetLocationsDialog
@@ -94,6 +94,7 @@ class NetworthTab(QWidget):
         self._category_visibility: dict[str, bool] = {
             label: True for _, label in self.CATEGORY_FIELDS
         }
+        self._category_visibility["PLEX"] = True  # Add PLEX to visibility tracking
         now = datetime.now(UTC)
         self._date_to: datetime | None = now
         self._date_from: datetime | None = now - timedelta(days=90)
@@ -658,35 +659,123 @@ class NetworthTab(QWidget):
             self._snapshots_by_character = defaultdict(list)
             return []
 
-    async def _plot(self) -> None:
-        """Plot category series aggregated across all characters over time.
+    async def _load_snapshot_groups_and_data(
+        self, start: datetime | None = None, end: datetime | None = None
+    ) -> tuple[list[dict], dict[int, list[NetWorthSnapshot]], dict[int, list[dict]]]:
+        """Load snapshot groups and their associated character/PLEX data.
 
-        For each unique point in time, we aggregate the latest snapshot per
-        character whose snapshot_time <= that time. This ensures the Total
-        series is stable and correctly reflects the most recent known state
-        of each character at each point.
+        Returns:
+            Tuple of (groups list, char snapshots by group_id, plex snapshots by group_id)
         """
         try:
-            snaps = await self._load_all_snapshots()
+            # Load snapshot groups in range - ORDER BY ASC to process chronologically
+            groups = await self._networth._repo.fetchall(
+                """
+                SELECT snapshot_group_id, account_id, refresh_source, created_at, label
+                FROM networth_snapshot_groups
+                WHERE (? IS NULL OR created_at >= ?)
+                  AND (? IS NULL OR created_at <= ?)
+                ORDER BY created_at ASC
+                """,
+                (
+                    start.isoformat() if start else None,
+                    start.isoformat() if start else None,
+                    end.isoformat() if end else None,
+                    end.isoformat() if end else None,
+                ),
+            )
+            groups = [dict(g) for g in groups]
 
-            # Clear existing plot and legend to prevent duplicates
+            # Load character snapshots for each group
+            char_snaps_by_group: dict[int, list[NetWorthSnapshot]] = {}
+            plex_snaps_by_group: dict[int, list[dict]] = {}
+
+            for group in groups:
+                group_id = int(group["snapshot_group_id"])
+
+                # Get character snapshots for this group
+                char_snaps = await self._networth._repo.fetchall(
+                    """
+                    SELECT snapshot_id, character_id, account_id, snapshot_group_id, snapshot_time,
+                           total_asset_value, wallet_balance, market_escrow, market_sell_value,
+                           contract_collateral, contract_value, industry_job_value, plex_vault
+                    FROM networth_snapshots
+                    WHERE snapshot_group_id = ?
+                    ORDER BY character_id
+                    """,
+                    (group_id,),
+                )
+                if char_snaps:
+                    char_snaps_by_group[group_id] = [
+                        NetWorthSnapshot(**dict(s)) for s in char_snaps
+                    ]
+
+                # Get PLEX snapshots for this group
+                plex_snaps = await self._networth._repo.fetchall(
+                    """
+                    SELECT plex_snapshot_id, account_id, snapshot_group_id, snapshot_time,
+                           plex_units, plex_unit_price, plex_total_value
+                    FROM account_plex_snapshots
+                    WHERE snapshot_group_id = ?
+                    """,
+                    (group_id,),
+                )
+                if plex_snaps:
+                    plex_snaps_by_group[group_id] = [dict(p) for p in plex_snaps]
+                    logger.debug(
+                        "Loaded %d PLEX snapshots for group %d",
+                        len(plex_snaps),
+                        group_id,
+                    )
+                else:
+                    logger.debug("No PLEX snapshots found for group %d", group_id)
+
+            return groups, char_snaps_by_group, plex_snaps_by_group
+        except Exception:
+            logger.exception("Failed to load snapshot groups and data")
+            return [], {}, {}
+
+    async def _plot(self) -> None:
+        """Plot net worth from snapshot groups with PLEX as separate series.
+
+        Groups snapshots by snapshot_group_id for stable aggregation.
+        Each graph point represents one snapshot group (Refresh All or Refresh Account).
+        PLEX is displayed as a separate series.
+        """
+        try:
+            start, end = self._current_date_filters()
+
+            # Load both snapshot groups for graph and individual snapshots for editing
+            (
+                groups,
+                char_snaps_by_group,
+                plex_snaps_by_group,
+            ) = await self._load_snapshot_groups_and_data(start, end)
+            await self._load_all_snapshots()  # Keep for edit dialog compatibility
+
+            # Clear existing plot and legend
             self._plot_widget.clear()
             self._hover_label.setText("Hover over graph for details")
 
-            # Clear the legend items if it exists
+            # Properly clear and recreate legend
             plot_item = self._plot_widget.getPlotItem()
             if plot_item is not None:
-                legend = plot_item.legend
-                if legend is not None:
-                    legend.clear()
+                # Remove old legend completely
+                if plot_item.legend is not None:
+                    plot_item.legend.scene().removeItem(plot_item.legend)
+                    plot_item.legend = None
+                # Create fresh legend
+                plot_item.addLegend()
 
-            if not snaps:
-                logger.debug("No snapshots available to plot")
+            if not groups:
+                logger.debug("No snapshot groups available to plot")
                 self._last_plot_cache = {}
                 return
 
-            # Collect all unique timestamps from snapshots to use as x-axis points
+            # Get character IDs for filtering
             ids = await self._get_all_character_ids()
+
+            # Compute filtered assets if location filter is active
             filtered_assets: dict[int, float] = {}
             if self._active_location_ids:
                 for cid in ids:
@@ -703,64 +792,156 @@ class NetworthTab(QWidget):
                             exc_info=True,
                         )
 
-            # Gather all unique timestamps from the loaded snapshots
-            # Use snapshot_time as the canonical ordering point
-            unique_times: list[datetime] = sorted(
-                {s.snapshot_time for s in snaps if hasattr(s, "snapshot_time")}
-            )
+            # Build aggregation per group
+            group_timestamps: list[float] = []
+            group_data: dict[int, dict[str, float]] = {}
+            group_metadata: dict[int, dict[str, Any]] = {}
 
-            if not unique_times:
-                self._last_plot_cache = {}
-                return
-
-            # For each unique timestamp, aggregate the latest snapshot per character
-            # using get_snapshots_up_to_time which correctly picks one snapshot per
-            # character with snapshot_time <= target_time
-            buckets: dict[datetime, dict[str, float]] = {}
-            for ts in unique_times:
+            for group in groups:
+                group_id = int(group["snapshot_group_id"])
                 try:
-                    per_char_snaps = await self._networth.get_snapshots_up_to_time(
-                        ts, character_ids=ids
-                    )
+                    group_time = datetime.fromisoformat(str(group["created_at"]))
                 except Exception:
-                    logger.debug(
-                        "Failed to fetch per-character snapshots for time %s",
-                        ts,
-                        exc_info=True,
-                    )
-                    per_char_snaps = []
+                    continue
 
+                # Initialize category buckets
                 bucket_values: dict[str, float] = {
                     label: 0.0 for _, label in self.CATEGORY_FIELDS
                 }
-                for s in per_char_snaps:
+                bucket_values["PLEX"] = 0.0  # Add PLEX category
+
+                # Get latest snapshot per character up to AND INCLUDING this group
+                # For each character, get their most recent snapshot where:
+                # - The snapshot is from this group OR an earlier group (group_id <= current)
+                # - The snapshot time is at or before this group's time
+                try:
+                    char_snaps = await self._networth._repo.fetchall(
+                        """
+                        SELECT
+                            snapshot_id, character_id, account_id, snapshot_group_id, snapshot_time,
+                            total_asset_value,
+                            wallet_balance, market_escrow, market_sell_value,
+                            contract_collateral, contract_value, industry_job_value, plex_vault
+                        FROM (
+                            SELECT ns.*,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY ns.character_id
+                                       ORDER BY ns.snapshot_time DESC
+                                   ) as rn
+                            FROM networth_snapshots ns
+                            WHERE ns.snapshot_group_id IS NOT NULL 
+                              AND (
+                                  (ns.snapshot_group_id < ?)
+                                  OR (ns.snapshot_group_id = ? AND ns.snapshot_time <= ?)
+                              )
+                        ) t
+                        WHERE rn = 1
+                        ORDER BY character_id
+                        """,
+                        (group_id, group_id, group_time.isoformat()),
+                    )
+                    char_snaps = [NetWorthSnapshot(**dict(s)) for s in char_snaps]
+                except Exception:
+                    logger.debug("Failed to get snapshots for group %d", group_id, exc_info=True)
+                    char_snaps = []
+
+                # Aggregate character snapshots
+                for snap in char_snaps:
                     for field, label in self.CATEGORY_FIELDS:
-                        value = float(getattr(s, field, 0.0) or 0.0)
+                        value = float(getattr(snap, field, 0.0) or 0.0)
                         if label == "Assets" and self._active_location_ids:
                             value = filtered_assets.get(
-                                getattr(s, "character_id", 0), value
+                                int(getattr(snap, "character_id", 0)), value
                             )
                         if not self._category_visibility.get(label, True):
                             value = 0.0
                         bucket_values[label] = bucket_values.get(label, 0.0) + value
-                buckets[ts] = bucket_values
 
-            # Convert datetime to timestamps for plotting
-            timestamps = [ts.timestamp() for ts in unique_times]
+                # Aggregate PLEX snapshots - get latest per account up to AND INCLUDING this group
+                try:
+                    plex_snaps = await self._networth._repo.fetchall(
+                        """
+                        SELECT plex_snapshot_id, account_id, snapshot_group_id, snapshot_time,
+                               plex_units, plex_unit_price, plex_total_value
+                        FROM (
+                            SELECT aps.*,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY aps.account_id
+                                       ORDER BY aps.snapshot_time DESC
+                                   ) as rn
+                            FROM account_plex_snapshots aps
+                            WHERE aps.snapshot_group_id IS NOT NULL 
+                              AND (
+                                  (aps.snapshot_group_id < ?)
+                                  OR (aps.snapshot_group_id = ? AND aps.snapshot_time <= ?)
+                              )
+                        ) t
+                        WHERE rn = 1
+                        ORDER BY account_id
+                        """,
+                        (group_id, group_id, group_time.isoformat()),
+                    )
+                    plex_snaps = [dict(p) for p in plex_snaps]
+                except Exception:
+                    logger.debug("Failed to get PLEX snapshots for group %d", group_id, exc_info=True)
+                    plex_snaps = []
 
-            # Plot each category with different line styles and scatter points
-            self._last_plot_cache = {"timestamps": timestamps, "series": {}}
+                plex_total = 0.0
+                plex_count = 0
+                for plex_snap in plex_snaps:
+                    value = float(plex_snap.get("plex_total_value", 0.0) or 0.0)
+                    plex_total += value
+                    plex_count += 1
+                    logger.debug(
+                        "PLEX snap: account=%s, value=%.2f",
+                        plex_snap.get("account_id"),
+                        value,
+                    )
+                bucket_values["PLEX"] = plex_total
+                if plex_total > 0:
+                    logger.debug(
+                        "Group %d PLEX total: %.2f (from %d snaps)",
+                        group_id,
+                        plex_total,
+                        plex_count,
+                    )
+
+                group_timestamps.append(group_time.timestamp())
+                group_data[group_id] = bucket_values
+                group_metadata[group_id] = {
+                    "group_id": group_id,
+                    "account_id": group.get("account_id"),
+                    "refresh_source": group.get("refresh_source"),
+                    "label": group.get("label"),
+                    "timestamp": group_time,
+                    "char_count": len(char_snaps),
+                    "plex_count": plex_count,
+                    "plex_total": plex_total,
+                }
+
+            if not group_timestamps:
+                self._last_plot_cache = {}
+                return
+
+            # Plot each category with different line styles
+            self._last_plot_cache = {
+                "timestamps": group_timestamps,
+                "series": {},
+                "group_metadata": group_metadata,
+            }
             plotted_labels: list[str] = []
+
+            # Plot asset-based categories
             for field, label in self.CATEGORY_FIELDS:
                 if not self._category_visibility.get(label, True):
                     continue
-                values = [buckets[ts][label] for ts in unique_times]
+
+                values = [group_data[gid][label] for gid in sorted(group_data.keys())]
                 if any(v > 0 for v in values):
                     color = self.COLOR_MAP.get(label, "#000000")
                     line_style = self.LINE_STYLE_MAP.get(label, "solid")
                     symbol = self.SYMBOL_MAP.get(label, "o")
 
-                    # Map line style string to PyQtGraph pen style
                     style_map = {
                         "solid": Qt.PenStyle.SolidLine,
                         "dash": Qt.PenStyle.DashLine,
@@ -771,7 +952,7 @@ class NetworthTab(QWidget):
 
                     pen = pg.mkPen(color=color, width=1.5, style=pen_style)
                     self._plot_widget.plot(
-                        timestamps,
+                        group_timestamps,
                         values,
                         pen=pen,
                         name=label,
@@ -779,26 +960,67 @@ class NetworthTab(QWidget):
                         symbolSize=6,
                         symbolBrush=color,
                         symbolPen=pg.mkPen(color=color, width=1),
-                        antialias=True,  # Enable antialiasing for this plot
+                        antialias=True,
                     )
                     self._last_plot_cache["series"][label] = values
                     plotted_labels.append(label)
 
-            # Aggregate total of visible categories
+            # Plot PLEX as separate series (if visible)
+            if self._category_visibility.get("PLEX", True):
+                plex_values = [
+                    group_data[gid].get("PLEX", 0.0)
+                    for gid in sorted(group_data.keys())
+                ]
+                logger.debug("PLEX values for plot: %s", plex_values)
+                logger.debug("Any PLEX > 0? %s", any(v > 0 for v in plex_values))
+            else:
+                plex_values = []
+                logger.debug("PLEX visibility disabled, skipping")
+
+            if plex_values and any(v > 0 for v in plex_values):
+                plex_color = self.COLOR_MAP.get("PLEX", "#e377c2")
+                plex_symbol = self.SYMBOL_MAP.get("PLEX", "star")
+                plex_line_style = self.LINE_STYLE_MAP.get("PLEX", "dot")
+
+                style_map = {
+                    "solid": Qt.PenStyle.SolidLine,
+                    "dash": Qt.PenStyle.DashLine,
+                    "dot": Qt.PenStyle.DotLine,
+                    "dashdot": Qt.PenStyle.DashDotLine,
+                }
+                pen_style = style_map.get(plex_line_style, Qt.PenStyle.DotLine)
+
+                pen = pg.mkPen(color=plex_color, width=1.5, style=pen_style)
+                self._plot_widget.plot(
+                    group_timestamps,
+                    plex_values,
+                    pen=pen,
+                    name="PLEX",
+                    symbol=plex_symbol,
+                    symbolSize=6,
+                    symbolBrush=plex_color,
+                    symbolPen=pg.mkPen(color=plex_color, width=1),
+                    antialias=True,
+                )
+                logger.info("Plotted PLEX series with %d points", len(plex_values))
+                self._last_plot_cache["series"]["PLEX"] = plex_values
+                plotted_labels.append("PLEX")
+            else:
+                logger.debug("No PLEX values to plot")
+
+            # Plot Total
             if plotted_labels:
                 total_values = [
-                    sum(buckets[ts][lbl] for lbl in plotted_labels)
-                    for ts in unique_times
+                    sum(group_data[gid].get(lbl, 0.0) for lbl in plotted_labels)
+                    for gid in sorted(group_data.keys())
                 ]
-                pen = pg.mkPen(
-                    color="#000000", width=2.5, style=Qt.PenStyle.SolidLine
-                )  # Thick solid for Total
+                pen = pg.mkPen(color="#000000", width=2.5, style=Qt.PenStyle.SolidLine)
                 self._plot_widget.plot(
-                    timestamps,
+                    group_timestamps,
                     total_values,
                     pen=pen,
                     name="Total",
-                    symbol="s",  # Square markers for Total line
+                    symbol="s",
                     symbolSize=7,
                     symbolBrush="#000000",
                     antialias=True,
@@ -807,12 +1029,11 @@ class NetworthTab(QWidget):
 
             self._update_delta_label()
 
-            # Ensure hover line is re-added to the plot after clearing
+            # Re-add hover line
             if hasattr(self, "_hover_line"):
                 try:
                     self._plot_widget.addItem(self._hover_line)
                 except Exception:
-                    # If it fails (e.g., already added), recreate it
                     self._hover_line = pg.InfiniteLine(
                         angle=90,
                         movable=False,
@@ -824,7 +1045,7 @@ class NetworthTab(QWidget):
                     self._hover_line.hide()
 
         except Exception:
-            logger.exception("Failed to plot net worth data")
+            logger.exception("Failed to plot net worth data from groups")
 
     def _find_nearest_snapshot(self, ts_float: float) -> Any | None:
         """Find the nearest snapshot to the provided timestamp.
@@ -941,11 +1162,18 @@ class NetworthTab(QWidget):
                             if closest is not None:
                                 snapshots_by_char[char_id] = closest
 
+                    # Find group metadata for this snapshot
+                    group_metadata = {}
+                    if hasattr(snapshot, "snapshot_group_id") and snapshot.snapshot_group_id:
+                        group_meta_dict = self._last_plot_cache.get("group_metadata", {})
+                        group_metadata = group_meta_dict.get(snapshot.snapshot_group_id, {})
+
                     dlg = EditSnapshotDialog(
                         snapshot,
                         parent=self,
                         characters=characters,
                         snapshots_by_character=snapshots_by_char,
+                        group_metadata=group_metadata,
                     )
                     if dlg.exec():
                         updated = dlg.get_updated_snapshot()

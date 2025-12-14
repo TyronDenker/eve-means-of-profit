@@ -536,6 +536,10 @@ class CharactersTab(QWidget):
                     )
                     # Create PLEX snapshots for the account
                     if snapshot_group_id and account_id:
+                        logger.debug(
+                            "Account Refresh: Creating PLEX snapshot for account %d",
+                            account_id,
+                        )
                         await self._create_account_plex_snapshots(
                             [account_id], snapshot_group_id
                         )
@@ -684,10 +688,26 @@ class CharactersTab(QWidget):
                                 )
                                 if account_id:
                                     account_ids.add(account_id)
+
+                        # Also check for accounts with PLEX but no assigned characters
+                        if hasattr(self._settings, "get_accounts"):
+                            all_accounts = self._settings.get_accounts()
+                            for acc_id, acc_data in all_accounts.items():
+                                plex_units = acc_data.get("plex_units", 0)
+                                if plex_units > 0:
+                                    account_ids.add(acc_id)
+
+                        logger.debug(
+                            "Refresh All: Creating PLEX snapshots for accounts: %s",
+                            list(account_ids),
+                        )
+
                         if account_ids:
                             await self._create_account_plex_snapshots(
                                 list(account_ids), snapshot_group_id
                             )
+                        else:
+                            logger.debug("No accounts found for PLEX snapshot creation")
                 except Exception:
                     logger.debug(
                         "Unable to create snapshot group for refresh all",
@@ -866,29 +886,65 @@ class CharactersTab(QWidget):
                     plex_units = 0
                     plex_price = 0.0
 
-                    # Get PLEX units and price from settings
+                    # Get PLEX units from settings
                     if hasattr(self._settings, "get_account_plex_units"):
                         plex_units = int(
                             self._settings.get_account_plex_units(account_id) or 0
                         )
 
-                    if plex_units > 0 and self._fuzzwork_provider:
-                        # Try to get PLEX price
-                        market_data = self._fuzzwork_provider.get_market_data(44992)
-                        if market_data and market_data.region_data:
-                            for region_data in market_data.region_data.values():
-                                if region_data.sell_stats:
-                                    plex_price = float(region_data.sell_stats.median)
-                                    break
+                    logger.debug(
+                        "Account %d PLEX units from settings: %d",
+                        account_id,
+                        plex_units,
+                    )
 
                     if plex_units > 0:
+                        # Try to get PLEX price from market data
+                        if self._fuzzwork_provider:
+                            try:
+                                market_data = self._fuzzwork_provider.get_market_data(
+                                    44992
+                                )
+                                if market_data and market_data.region_data:
+                                    for region_data in market_data.region_data.values():
+                                        if region_data.sell_stats:
+                                            plex_price = float(
+                                                region_data.sell_stats.median
+                                            )
+                                            logger.debug(
+                                                "Got PLEX price from market: %.2f ISK",
+                                                plex_price,
+                                            )
+                                            break
+                                if plex_price == 0.0:
+                                    logger.warning(
+                                        "No PLEX price available from Fuzzwork, using 0.0"
+                                    )
+                            except Exception:
+                                logger.warning(
+                                    "Failed to get PLEX price, using 0.0",
+                                    exc_info=True,
+                                )
+                        else:
+                            logger.warning(
+                                "Fuzzwork provider not available for PLEX pricing"
+                            )
+
+                        # Save snapshot even if price is 0 (better than no snapshot)
                         await self._networth_service.save_account_plex_snapshot(
                             account_id, plex_units, plex_price, snapshot_group_id
                         )
-                        logger.debug(
-                            "Created PLEX snapshot for account %d in group %d",
+                        logger.info(
+                            "Created PLEX snapshot: account=%d, units=%d, price=%.2f, group=%d",
                             account_id,
+                            plex_units,
+                            plex_price,
                             snapshot_group_id,
+                        )
+                    else:
+                        logger.debug(
+                            "Skipping PLEX snapshot for account %d (no units configured)",
+                            account_id,
                         )
                 except Exception:
                     logger.debug(

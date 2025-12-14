@@ -250,41 +250,12 @@ class NetWorthService:
                 character_id,
             )
 
-        # Calculate account-wide PLEX vault value (user-set PLEX units per account).
-        # CCP does not provide an endpoint for PLEX vault; we derive ISK value by
-        # multiplying user-provided PLEX units with market price. To avoid overcounting
-        # across multiple characters in the same account, only the account's primary
-        # character includes the vault value; others record 0.
+        # PLEX is account-level data stored separately in account_plex_snapshots table.
+        # PLEX snapshots are created separately during refresh operations.
         plex_vault = 0.0
         account_id = None
-        try:
-            primary_char = None
-            if self._settings and hasattr(self._settings, "get_account_for_character"):
-                account_id = self._settings.get_account_for_character(character_id)
-                if account_id is not None and hasattr(
-                    self._settings, "get_primary_character_for_account"
-                ):
-                    primary_char = self._settings.get_primary_character_for_account(
-                        account_id
-                    )
-
-            if account_id is not None and primary_char == character_id:
-                units = 0
-                if hasattr(self._settings, "get_account_plex_units"):
-                    units = int(self._settings.get_account_plex_units(account_id) or 0)
-                if units > 0:
-                    plex_price = self._get_market_price(44992)
-                    if plex_price and plex_price > 0:
-                        plex_vault = units * plex_price
-                        self._last_used_prices[44992] = (plex_price, "market")
-                    else:
-                        # PLEX price unavailable - log warning but continue
-                        logger.warning(
-                            f"PLEX market price unavailable for character {character_id}, "
-                            f"vault value will be 0 (units: {units})"
-                        )
-        except Exception:
-            logger.debug("Account PLEX valuation failed", exc_info=True)
+        if self._settings and hasattr(self._settings, "get_account_for_character"):
+            account_id = self._settings.get_account_for_character(character_id)
 
         market_escrow = 0.0
         market_sell_value = 0.0
@@ -575,50 +546,90 @@ class NetWorthService:
         price_snapshot_id = None
         if self._last_used_prices and self._fuzzwork:
             try:
-                market_data: list[FuzzworkMarketDataPoint] = []
-                for type_id, (price_value, source) in self._last_used_prices.items():
-                    region_data = {}
+                # Check if we should save a price snapshot
+                custom_count = sum(
+                    1
+                    for _, (_, src) in self._last_used_prices.items()
+                    if src == "custom"
+                )
 
-                    fuzz_data = self._fuzzwork.get_market_data(type_id)
-                    if fuzz_data and fuzz_data.region_data:
-                        region_data = fuzz_data.region_data
+                should_save = False
 
-                    if source == "custom" or not region_data:
-                        region_data[0] = FuzzworkRegionMarketData(
-                            region_id=0,
-                            sell_stats=FuzzworkMarketStats(
-                                weighted_average=price_value,
-                                max_price=price_value,
-                                min_price=price_value,
-                                stddev=0.0,
-                                median=price_value,
-                                volume=0,
-                                num_orders=0,
-                                five_percent=price_value,
-                            ),
-                            buy_stats=None,
+                # Always save if there are custom prices
+                if custom_count > 0:
+                    should_save = True
+                    logger.debug(
+                        "Price snapshot needed: %d custom prices used", custom_count
+                    )
+                else:
+                    # Check if Fuzzwork data is newer than last snapshot
+                    fuzz_time = self._fuzzwork.get_snapshot_time()
+                    if fuzz_time:
+                        recent_snapshots = await prices.get_snapshots(
+                            self._repo, limit=1
+                        )
+                        if not recent_snapshots:
+                            should_save = True
+                            logger.debug("Price snapshot needed: no previous snapshots")
+                        else:
+                            last_snapshot_time = recent_snapshots[0].snapshot_time
+                            if fuzz_time > last_snapshot_time:
+                                should_save = True
+                                logger.debug(
+                                    "Price snapshot needed: Fuzzwork data updated (fuzz=%s > last=%s)",
+                                    fuzz_time.isoformat(),
+                                    last_snapshot_time.isoformat(),
+                                )
+                            else:
+                                logger.debug(
+                                    "Skipping price snapshot: Fuzzwork data unchanged (fuzz=%s <= last=%s)",
+                                    fuzz_time.isoformat(),
+                                    last_snapshot_time.isoformat(),
+                                )
+
+                if should_save:
+                    market_data: list[FuzzworkMarketDataPoint] = []
+                    for type_id, (
+                        price_value,
+                        source,
+                    ) in self._last_used_prices.items():
+                        region_data = {}
+
+                        fuzz_data = self._fuzzwork.get_market_data(type_id)
+                        if fuzz_data and fuzz_data.region_data:
+                            region_data = fuzz_data.region_data
+
+                        if source == "custom" or not region_data:
+                            region_data[0] = FuzzworkRegionMarketData(
+                                region_id=0,
+                                sell_stats=FuzzworkMarketStats(
+                                    weighted_average=price_value,
+                                    max_price=price_value,
+                                    min_price=price_value,
+                                    stddev=0.0,
+                                    median=price_value,
+                                    volume=0,
+                                    num_orders=0,
+                                    five_percent=price_value,
+                                ),
+                                buy_stats=None,
+                            )
+
+                        market_data.append(
+                            FuzzworkMarketDataPoint(
+                                type_id=type_id,
+                                snapshot_time=snapshot.snapshot_time,
+                                region_data=region_data,
+                            )
                         )
 
-                    market_data.append(
-                        FuzzworkMarketDataPoint(
-                            type_id=type_id,
-                            snapshot_time=snapshot.snapshot_time,
-                            region_data=region_data,
+                    if market_data:
+                        price_snapshot_id = await prices.save_snapshot(
+                            self._repo,
+                            market_data,
+                            notes=f"Networth snapshot for character {character_id} "
+                            f"(includes {custom_count} custom prices)",
                         )
-                    )
-
-                if market_data:
-                    custom_count = sum(
-                        1
-                        for _, (_, src) in self._last_used_prices.items()
-                        if src == "custom"
-                    )
-                    price_snapshot_id = await prices.save_snapshot(
-                        self._repo,
-                        market_data,
-                        notes=f"Networth snapshot for character {character_id} "
-                        f"(includes {custom_count} custom prices)",
-                    )
             except Exception:
                 logger.exception("Failed to save price snapshot", exc_info=True)
 
