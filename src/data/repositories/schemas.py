@@ -391,8 +391,7 @@ CREATE TABLE IF NOT EXISTS networth_snapshot_groups (
     account_id INTEGER,
     refresh_source TEXT,  -- 'refresh_all', 'account', 'character'
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    label TEXT,
-    refresh_source TEXT
+    label TEXT
 );
 """
 

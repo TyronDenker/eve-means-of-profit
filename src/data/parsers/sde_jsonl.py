@@ -77,6 +77,9 @@ FIELD_NAME_MAP = {
     "trackingSpeedAttributeID": "tracking_speed_attribute_id",
     "fittingUsageChanceAttributeID": "fitting_usage_chance_attribute_id",
     "displayNameID": "display_name_id",
+    # Market group fields
+    "hasTypes": "has_types",
+    "parentGroupID": "parent_group_id",
     # Material fields
     "materialTypeID": "material_type_id",
 }
