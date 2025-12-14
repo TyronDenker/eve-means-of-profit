@@ -53,6 +53,7 @@ class MainWindow(QMainWindow):
         self._character_service = container.resolve("character_service")
         self._repository = container.resolve("repository")
         self._sde_provider = container.resolve("sde_provider")
+        self._sde_client = container.resolve("sde_client")
         self._location_service = container.resolve("location_service")
         self._asset_service = container.resolve("asset_service")
         self._wallet_service = container.resolve("wallet_service")
@@ -138,12 +139,17 @@ class MainWindow(QMainWindow):
 
         These tasks run in background without blocking UI interaction.
         """
-        # 1. Fuzzwork download (5-10 seconds typically)
+        # 1. Check for SDE updates (quick check, download if needed)
+        sde_update_task = asyncio.ensure_future(self._check_sde_updates())
+        self._background_tasks.add(sde_update_task)
+        sde_update_task.add_done_callback(lambda t: self._background_tasks.discard(t))
+
+        # 2. Fuzzwork download (5-10 seconds typically)
         fuzzwork_task = asyncio.ensure_future(self._initialize_fuzzwork())
         self._background_tasks.add(fuzzwork_task)
         fuzzwork_task.add_done_callback(lambda t: self._background_tasks.discard(t))
 
-        # 2. Refresh character data from ESI (network calls for fresh data)
+        # 3. Refresh character data from ESI (network calls for fresh data)
         refresh_task = asyncio.ensure_future(self._refresh_characters_from_esi())
         self._background_tasks.add(refresh_task)
         refresh_task.add_done_callback(lambda t: self._background_tasks.discard(t))
@@ -161,6 +167,43 @@ class MainWindow(QMainWindow):
             logger.info("Phase 2: Refreshed %d characters from ESI", len(characters))
         except Exception as e:
             logger.warning("Phase 2: Failed to refresh characters from ESI: %s", e)
+
+    async def _check_sde_updates(self) -> None:
+        """Check for SDE updates and download if needed.
+
+        This runs in the background on startup to ensure SDE is up to date.
+        """
+        try:
+            logger.info("Checking for SDE updates...")
+            needs_update, latest_build = await self._sde_client.check_for_updates()
+
+            if needs_update:
+                logger.info(f"SDE update available: {latest_build}")
+                if hasattr(self, "_progress_widget"):
+                    self._progress_widget.start_operation(
+                        "Downloading SDE update...", total=100
+                    )
+
+                # Download the update
+                success = await self._sde_client.download_sde(latest_build)
+
+                if success:
+                    logger.info("SDE updated successfully")
+                    if hasattr(self, "_progress_widget"):
+                        self._progress_widget.complete("SDE updated")
+
+                    # Clear and rebuild SDE provider caches
+                    self._sde_provider.clear_cache()
+                    await self._sde_provider.initialize_async()
+                else:
+                    logger.warning("SDE update failed")
+                    if hasattr(self, "_progress_widget"):
+                        self._progress_widget.complete("SDE update failed")
+            else:
+                logger.info("SDE is up to date")
+
+        except Exception as e:
+            logger.error(f"Failed to check for SDE updates: {e}", exc_info=True)
 
     async def _initialize_fuzzwork(self) -> None:
         """Initialize fuzzwork data in background (non-blocking).
@@ -542,11 +585,13 @@ def main_window() -> int:
     Returns:
         Exit code
     """
-    # Setup logging
-    logging.basicConfig(
-        level=getattr(logging, global_config.app.log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # Import here to avoid circular dependencies
+    from utils import setup_logging
+    from utils.settings_manager import get_settings_manager
+
+    # Setup logging with file rotation
+    settings_manager = get_settings_manager()
+    setup_logging(settings_manager=settings_manager)
 
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("qasync").setLevel(logging.WARNING)

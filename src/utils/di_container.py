@@ -202,6 +202,7 @@ class ServiceKeys:
     ESI_CLIENT = "esi_client"
     REPOSITORY = "repository"
     SDE_PROVIDER = "sde_provider"
+    SDE_CLIENT = "sde_client"
     FUZZWORK_CLIENT = "fuzzwork_client"
     FUZZWORK_PROVIDER = "fuzzwork_provider"
 
@@ -340,9 +341,19 @@ def configure_container(container: DIContainer | None = None) -> DIContainer:
 
         config = c.resolve(ServiceKeys.CONFIG)
         parser = SDEJsonlParser(str(config.sde.sde_dir_path))
-        return SDEProvider(parser)
+        # No progress callback in DI factory - will be set when needed
+        return SDEProvider(parser, progress_callback=None)
 
     container.register_factory(ServiceKeys.SDE_PROVIDER, sde_provider_factory)
+
+    # Register SDE client
+    def sde_client_factory(c: DIContainer) -> Any:
+        from data.clients.sde_client import SDEClient
+
+        config = c.resolve(ServiceKeys.CONFIG)
+        return SDEClient(config=config, progress_callback=None)
+
+    container.register_factory(ServiceKeys.SDE_CLIENT, sde_client_factory)
 
     # Register Fuzzwork client
     def fuzzwork_client_factory(c: DIContainer) -> Any:
@@ -361,9 +372,9 @@ def configure_container(container: DIContainer | None = None) -> DIContainer:
         """
         from data import FuzzworkProvider
         from data.parsers.fuzzwork_csv import FuzzworkCSVParser
-        from utils import global_config
 
-        csv_path = global_config.app.user_data_dir / "fuzzwork" / "aggregatecsv.csv"
+        config = c.resolve(ServiceKeys.CONFIG)
+        csv_path = config.app.user_data_dir / "fuzzwork" / "aggregatecsv.csv"
         if csv_path.exists():
             parser = FuzzworkCSVParser(csv_path)
             return FuzzworkProvider(parser)

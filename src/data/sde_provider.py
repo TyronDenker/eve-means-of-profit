@@ -1,5 +1,6 @@
 """SDE Provider for high-level data access and caching."""
 
+import asyncio
 import logging
 import os
 import pickle
@@ -17,6 +18,7 @@ from models.eve import (
     EveType,
 )
 from utils.config import get_config
+from utils.progress_callback import ProgressCallback, ProgressPhase, ProgressUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class SDEProvider:
         *,
         background_build: bool = True,
         persist_path: str | Path | None = None,
+        progress_callback: ProgressCallback | None = None,
     ):
         """Initialize the SDE provider.
 
@@ -65,8 +68,10 @@ class SDEProvider:
             parser: SDEJsonlParser instance for loading SDE data.
             background_build: Whether to build caches/indices in a background thread.
             persist_path: Optional path to persist/load prebuilt caches/indices.
+            progress_callback: Optional callback for progress updates during builds.
         """
         self._parser = parser
+        self._progress_callback = progress_callback
 
         # Primary caches - ID-based lookups (dict[id, object])
         self._types_cache: dict[int, EveType] | None = None
@@ -491,10 +496,16 @@ class SDEProvider:
 
     def _build_and_persist_background(self) -> None:
         try:
+            self._emit_progress(
+                ProgressPhase.STARTING, 0, 100, "Building SDE indices..."
+            )
             self._build_all_indices_sync()
+            self._emit_progress(ProgressPhase.SAVING, 90, 100, "Persisting indices...")
             self._persist_indices()
+            self._emit_progress(ProgressPhase.COMPLETE, 100, 100, "SDE ready")
         except Exception:
             logger.exception("Background SDE build failed")
+            self._emit_progress(ProgressPhase.ERROR, 0, 100, "SDE build failed")
         finally:
             self._background_ready.set()
 
@@ -964,3 +975,66 @@ class SDEProvider:
             self._npc_stations_cache = self._parser.load_npc_station_ids()
             logger.info(f"Loaded {len(self._npc_stations_cache)} NPC stations")
         return self._npc_stations_cache
+
+    def _emit_progress(
+        self,
+        phase: ProgressPhase,
+        current: int,
+        total: int,
+        message: str,
+        detail: str | None = None,
+    ) -> None:
+        """Emit progress update if callback is configured.
+
+        Args:
+            phase: Current phase of operation.
+            current: Current progress value.
+            total: Total progress value.
+            message: Status message.
+            detail: Optional detail message.
+        """
+        if self._progress_callback:
+            update = ProgressUpdate(
+                operation="sde_build",
+                character_id=None,
+                phase=phase,
+                current=current,
+                total=total,
+                message=message,
+                detail=detail,
+            )
+            self._progress_callback(update)
+
+    async def initialize_async(self) -> None:
+        """Initialize SDE provider asynchronously.
+
+        This method runs blocking I/O operations in a thread pool to avoid
+        blocking the async event loop during startup.
+        """
+        self._emit_progress(ProgressPhase.STARTING, 0, 100, "Initializing SDE...")
+
+        # Run blocking operations in thread pool
+        loop = asyncio.get_event_loop()
+
+        # Check if persisted indices exist
+        if self._persist_path.exists():
+            self._emit_progress(
+                ProgressPhase.FETCHING, 10, 100, "Loading cached indices..."
+            )
+            loaded = await loop.run_in_executor(None, self._load_persisted_indices)
+            if loaded:
+                self._emit_progress(
+                    ProgressPhase.COMPLETE, 100, 100, "SDE loaded from cache"
+                )
+                self._background_ready.set()
+                return
+
+        # Build indices in thread pool
+        self._emit_progress(ProgressPhase.PROCESSING, 30, 100, "Building indices...")
+        await loop.run_in_executor(None, self._build_all_indices_sync)
+
+        self._emit_progress(ProgressPhase.SAVING, 90, 100, "Persisting indices...")
+        await loop.run_in_executor(None, self._persist_indices)
+
+        self._emit_progress(ProgressPhase.COMPLETE, 100, 100, "SDE initialized")
+        self._background_ready.set()

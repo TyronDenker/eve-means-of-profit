@@ -306,6 +306,22 @@ class SDEConfig(BaseSettings):
         description="Directory containing SDE JSONL files (relative to data_dir)",
     )
 
+    # RIFT endpoint
+    rift_download_url_template: str = Field(
+        default="https://sde.riftforeve.online/assets/eve-online-static-data-{build_id}-enhanced-jsonl.zip",
+        description="Template URL for downloading enhanced SDE from RIFT (format with build_id)",
+    )
+
+    # CCP endpoints
+    ccp_latest_url: str = Field(
+        default="https://developers.eveonline.com/static-data/tranquility/latest.jsonl",
+        description="URL for latest SDE build metadata from CCP",
+    )
+    ccp_changes_url_template: str = Field(
+        default="https://developers.eveonline.com/static-data/tranquility/changes/{build_id}.jsonl",
+        description="Template URL for CCP SDE changes feed (format with build_id)",
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="SDE_",
         env_file=".env",
