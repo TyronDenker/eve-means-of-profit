@@ -138,19 +138,18 @@ class AuthDialog(QDialog):
         self._signal_bus.auth_started.emit()
 
         try:
-            # Authenticate character
-            character_info = await self._service.authenticate_character(selected_scopes)
-
-            # Check for duplicate character BEFORE emitting signals
+            # Get existing characters BEFORE authentication to check for duplicates
             existing_characters = await self._service.get_authenticated_characters(
                 use_cache_only=True
             )
-            duplicate = any(
-                char.character_id == character_info.character_id
-                for char in existing_characters
-            )
+            existing_character_ids = {char.character_id for char in existing_characters}
 
-            if duplicate:
+            # Authenticate character
+            character_info = await self._service.authenticate_character(selected_scopes)
+
+            # Check if the newly authenticated character is a duplicate of an ALREADY EXISTING character
+            # (not a duplicate of itself from the token write)
+            if character_info.character_id in existing_character_ids:
                 # Show inline warning for duplicate character - DO NOT ADD
                 self.status_label.setStyleSheet("color: #FFA500; font-weight: bold;")
                 self.status_label.setText(

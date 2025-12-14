@@ -377,7 +377,8 @@ class ESIAuth:
 
             expires_at = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
 
-            self._tokens[str(character_id)] = {
+            # Update in-memory tokens dict and persist to disk
+            new_token = {
                 "character_id": character_id,
                 "character_name": character_name,
                 "access_token": access_token,
@@ -385,8 +386,11 @@ class ESIAuth:
                 "expires_at": expires_at,
                 "scopes": character_info.get("Scopes", "").split(),
             }
-
+            self._tokens[str(character_id)] = new_token
             self._save_tokens()
+
+            # Immediately reload from disk to ensure in-memory state matches file (handles any race or external edits)
+            self._load_tokens()
 
             logger.info(
                 "Successfully authenticated as %s (id=%s), token expires: %s",

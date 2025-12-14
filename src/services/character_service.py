@@ -140,7 +140,7 @@ class CharacterService:
             logger.info("Invalidated cache for character %d", character_id)
 
     async def authenticate_character(self, scopes: list[str]) -> CharacterInfo:
-        """Authenticate a new character.
+        """Authenticate a new character and update in-memory character cache immediately.
 
         Args:
             scopes: List of ESI scopes to request
@@ -154,19 +154,19 @@ class CharacterService:
         # Authenticate via ESI client
         token_info = await self._client.authenticate_character(scopes)
 
+        char_id = token_info["character_id"]
+
         # Get public info for corp/alliance
         try:
-            public_info = await self._get_character_public_info(
-                token_info["character_id"]
-            )
+            public_info = await self._get_character_public_info(char_id)
         except Exception:
             logger.exception(
                 "Failed to get public info for character %s",
-                token_info["character_id"],
+                char_id,
             )
             public_info = {}
 
-        return CharacterInfo(
+        char_info = CharacterInfo(
             character_id=token_info["character_id"],
             character_name=token_info["character_name"],
             corporation_id=public_info.get("corporation_id"),
@@ -175,6 +175,11 @@ class CharacterService:
             alliance_name=public_info.get("alliance_name"),
             scopes=token_info.get("scopes", []),
         )
+
+        # Update the cache immediately so use_cache_only=True sees the new character
+        self._character_cache[char_id] = (char_info, datetime.now(UTC))
+
+        return char_info
 
     async def remove_character(self, character_id: int) -> bool:
         """Remove a character's authentication.
