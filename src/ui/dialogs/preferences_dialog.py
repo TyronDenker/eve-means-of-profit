@@ -255,16 +255,18 @@ class PreferencesDialog(QDialog):
     def _save_settings(self) -> None:
         """Save all settings from UI controls."""
         try:
+            # Track old values to detect changes
+            old_station = self._settings.get_market_source_station()
+            old_type = self._settings.get_market_price_type()
+
             # Market values
             station_map = ["jita", "amarr", "dodixie", "rens", "hek"]
-            self._settings.set_market_source_station(
-                station_map[self.station_combo.currentIndex()]
-            )
+            new_station = station_map[self.station_combo.currentIndex()]
+            self._settings.set_market_source_station(new_station)
 
             type_map = ["sell", "buy", "weighted"]
-            self._settings.set_market_price_type(
-                type_map[self.price_type_combo.currentIndex()]
-            )
+            new_type = type_map[self.price_type_combo.currentIndex()]
+            self._settings.set_market_price_type(new_type)
 
             self._settings.set_market_weighted_buy_ratio(self.weighted_spin.value())
 
@@ -277,6 +279,14 @@ class PreferencesDialog(QDialog):
             )
 
             logger.info("User preferences saved successfully")
+
+            # Emit signal if market preferences changed
+            if old_station != new_station or old_type != new_type:
+                from ui.signal_bus import get_signal_bus
+
+                signal_bus = get_signal_bus()
+                signal_bus.market_preferences_changed.emit()
+                logger.info("Market preferences changed, emitted signal")
 
         except Exception as e:
             logger.exception("Failed to save preferences: %s", e)

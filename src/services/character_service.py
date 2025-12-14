@@ -182,7 +182,7 @@ class CharacterService:
         return char_info
 
     async def remove_character(self, character_id: int) -> bool:
-        """Remove a character's authentication.
+        """Remove a character's authentication and mark their assets as removed.
 
         Args:
             character_id: Character ID to remove
@@ -194,17 +194,45 @@ class CharacterService:
             return False
         success = self._client.auth.remove_token(character_id)
 
-        # Track lifecycle event
+        # Track lifecycle event and mark assets as removed
         if success and self._repo:
             try:
+                # Mark character lifecycle event
                 await networth.save_character_lifecycle_event(
                     self._repo,
                     character_id,
                     "removed",
                 )
+
+                # Mark current assets as removed (don't delete - keep for historical context)
+                # First ensure the removed_at column exists
+                try:
+                    await self._repo.execute(
+                        "ALTER TABLE current_assets ADD COLUMN removed_at TIMESTAMP"
+                    )
+                    await self._repo.commit()
+                except Exception:
+                    # Column might already exist
+                    pass
+
+                # Mark all assets for this character as removed
+                from datetime import UTC, datetime
+
+                removed_time = datetime.now(UTC).isoformat()
+                await self._repo.execute(
+                    "UPDATE current_assets SET removed_at = ? WHERE character_id = ? AND removed_at IS NULL",
+                    (removed_time, character_id),
+                )
+                await self._repo.commit()
+                logger.info(
+                    "Marked %d assets as removed for character %d",
+                    self._repo.cursor.rowcount if self._repo.cursor else 0,
+                    character_id,
+                )
+
             except Exception:
                 logger.debug(
-                    "Failed to save lifecycle event for character removal %d",
+                    "Failed to save lifecycle event or mark assets for character removal %d",
                     character_id,
                     exc_info=True,
                 )

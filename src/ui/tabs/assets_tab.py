@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QLabel, QMenu, QVBoxLayout, QWidget
 
 from data import FuzzworkProvider
 from data.clients import ESIClient
+from data.repositories import prices
 from services.asset_service import AssetService
 from services.character_service import CharacterService
 from services.location_service import LocationService
@@ -52,7 +53,12 @@ class AssetsTab(QWidget):
         self._location_service = location_service
         self._fuzzwork = fuzzwork_provider
         self._settings = get_settings_manager()
+        self._repo = getattr(
+            asset_service, "_repo", None
+        )  # Access repository from asset service
         self._background_tasks: set[asyncio.Task] = set()
+        # Track pending repricing when market data is not yet available
+        self._pending_price_refresh = False
 
         self._columns: list[tuple[str, str]] = [
             ("group_name", "Group"),
@@ -208,6 +214,12 @@ class AssetsTab(QWidget):
         self._signal_bus.custom_location_changed.connect(location_changed_wrapper)
         self._signal_bus.character_added.connect(self._on_character_added)
         self._signal_bus.character_removed.connect(self._on_character_removed)
+
+        # Listen for market preference changes to update prices
+        self._signal_bus.market_preferences_changed.connect(
+            self._on_market_preferences_changed
+        )
+        logger.info("Assets tab connected to market_preferences_changed signal")
         # Listen for centralized character loading
         self._signal_bus.characters_loaded.connect(self._on_characters_loaded)
         logger.debug("Connected assets tab signals (id=%s)", id(self))
@@ -302,18 +314,52 @@ class AssetsTab(QWidget):
                 )
                 character_assets.append((char, enriched))
 
+            # Load prices from latest database snapshot with user preferences
+            snapshot_prices: dict[int, float] = {}
+            if self._repo:
+                trade_hub = (
+                    self._settings.get_market_source_station()
+                    if self._settings
+                    else "jita"
+                )
+                price_type = (
+                    self._settings.get_market_price_type() if self._settings else "sell"
+                )
+                weighted_ratio = (
+                    self._settings.get_market_weighted_buy_ratio()
+                    if self._settings
+                    else 0.3
+                )
+                # Map hub to region ID
+                hub_to_region = {
+                    "jita": 10000002,
+                    "amarr": 10000043,
+                    "dodixie": 10000032,
+                    "rens": 10000030,
+                    "hek": 10000042,
+                }
+                region_id = hub_to_region.get(trade_hub.lower(), 10000002)
+
+                try:
+                    snapshot_prices = await prices.get_latest_snapshot_prices(
+                        self._repo,
+                        region_id=region_id,
+                        price_type=price_type,
+                        weighted_buy_ratio=weighted_ratio,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to load snapshot prices: %s", e)
+
             # Now build rows with enriched assets (locations already resolved)
             for _char, enriched in character_assets:
                 for ea in enriched:
-                    # Apply fuzzwork and custom prices
-                    if ea.market_value is None and self._fuzzwork:
-                        fuzz_price = self._get_fuzzwork_price(ea.type_id)
-                        if fuzz_price:
-                            ea.market_value = fuzz_price
-
+                    # Apply prices in priority order: custom > snapshot > base
                     custom_price = self._settings.get_custom_price(ea.type_id)
                     if custom_price and custom_price.get("sell") is not None:
                         ea.market_value = custom_price["sell"]
+                    elif ea.type_id in snapshot_prices:
+                        ea.market_value = snapshot_prices[ea.type_id]
+                    # Otherwise market_value remains as set from repository (or None)
 
                     # Apply custom location overrides (name/system) for cached startup
                     if ea.structure_id:
@@ -375,6 +421,11 @@ class AssetsTab(QWidget):
 
             self._rows_cache = rows
             self.table.set_rows(rows)
+
+            # If fuzzwork was unavailable during initial load, remember to re-price
+            # once the provider becomes ready (main window will call on_fuzzwork_ready)
+            if not self._fuzzwork or not self._fuzzwork.is_loaded:
+                self._pending_price_refresh = True
 
             self.last_updated_label.setText(
                 f"Last Updated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} (cached data)"
@@ -674,15 +725,128 @@ class AssetsTab(QWidget):
                 # Recompute total value
                 qty = int(row.get("quantity") or 0)
                 unit = row.get("market_value")
-                if unit is None:
-                    unit = row.get("base_price") or 0.0
-                try:
-                    unit_f = float(unit or 0.0)
-                except Exception:
-                    unit_f = 0.0
-                row["total_value"] = unit_f * qty
+                # For total value calculation, use market_value, fall back to base_price, then 0
+                # But keep market_value as None if no price available (shows empty in table)
+                if unit is not None:
+                    try:
+                        unit_f = float(unit)
+                    except Exception:
+                        unit_f = 0.0
+                else:
+                    # No market value - try base price for total calculation
+                    base = row.get("base_price")
+                    if base is not None:
+                        try:
+                            unit_f = float(base)
+                        except Exception:
+                            unit_f = 0.0
+                    else:
+                        unit_f = 0.0
+                row["total_value"] = unit_f * qty if unit_f > 0 else None
         # Refresh table
         self.table.set_rows(self._rows_cache)
+
+    def _on_market_preferences_changed(self) -> None:
+        """Refresh all prices when market preferences change (hub/price type)."""
+        logger.info("Market preferences changed, refreshing all asset prices")
+        # Schedule async refresh to load latest snapshot prices with new preferences
+        task = asyncio.ensure_future(self._refresh_all_prices_async())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _refresh_all_prices_async(self) -> None:
+        """Asynchronously load snapshot prices and update all cached rows."""
+        try:
+            # Load prices from latest snapshot with current preferences
+            snapshot_prices: dict[int, float] = {}
+            if self._repo:
+                trade_hub = (
+                    self._settings.get_market_source_station()
+                    if self._settings
+                    else "jita"
+                )
+                price_type = (
+                    self._settings.get_market_price_type() if self._settings else "sell"
+                )
+                weighted_ratio = (
+                    self._settings.get_market_weighted_buy_ratio()
+                    if self._settings
+                    else 0.3
+                )
+                # Map hub to region ID
+                hub_to_region = {
+                    "jita": 10000002,
+                    "amarr": 10000043,
+                    "dodixie": 10000032,
+                    "rens": 10000030,
+                    "hek": 10000042,
+                }
+                region_id = hub_to_region.get(trade_hub.lower(), 10000002)
+
+                snapshot_prices = await prices.get_latest_snapshot_prices(
+                    self._repo,
+                    region_id=region_id,
+                    price_type=price_type,
+                    weighted_buy_ratio=weighted_ratio,
+                )
+
+            self._refresh_all_prices_with_data(snapshot_prices)
+        except Exception as e:
+            logger.exception("Failed to refresh prices from snapshot: %s", e)
+
+    def on_fuzzwork_ready(self) -> None:
+        """Called by the main window when market data becomes available."""
+        # With snapshot-based pricing, Fuzzwork readiness is no longer critical
+        # for displaying asset prices. Just log for debugging.
+        logger.debug("Fuzzwork provider ready (informational only for assets tab)")
+
+    def _refresh_all_prices_with_data(self, snapshot_prices: dict[int, float]) -> None:
+        """Update market and total values using provided snapshot prices.
+
+        Args:
+            snapshot_prices: Dict of type_id -> price from database snapshot
+        """
+        # Update all rows with new prices
+        for row in self._rows_cache:
+            type_id = row.get("type_id")
+            if not type_id:
+                continue
+
+            # Check if custom price exists (takes priority)
+            custom = self._settings.get_custom_price(type_id)
+            if custom and custom.get("sell") is not None:
+                row["market_value"] = custom["sell"]
+            elif type_id in snapshot_prices:
+                row["market_value"] = snapshot_prices[type_id]
+            else:
+                # Fall back to base price if no snapshot data
+                base = row.get("base_price")
+                row["market_value"] = base if base is not None else None
+
+            # Recalculate total value
+            qty = int(row.get("quantity") or 0)
+            unit = row.get("market_value")
+            if unit is not None:
+                try:
+                    unit_f = float(unit)
+                except Exception:
+                    unit_f = 0.0
+            else:
+                base = row.get("base_price")
+                if base is not None:
+                    try:
+                        unit_f = float(base)
+                    except Exception:
+                        unit_f = 0.0
+                else:
+                    unit_f = 0.0
+            row["total_value"] = unit_f * qty if unit_f > 0 else None
+
+        # Refresh table display
+        self.table.set_rows(self._rows_cache)
+        logger.info(
+            "Refreshed %d asset rows with snapshot prices", len(self._rows_cache)
+        )
 
     def _on_custom_location_changed(self, location_id: int) -> None:
         """Update displayed location info when custom location data changes."""
@@ -911,20 +1075,73 @@ class AssetsTab(QWidget):
         pass
 
     def _get_fuzzwork_price(self, type_id: int) -> float | None:
-        """Get sell price from fuzzwork data for Jita."""
+        """Get price from fuzzwork data respecting user preferences.
+
+        Respects trade hub and price type (buy/sell/weighted) preferences.
+        """
         if not self._fuzzwork or not self._fuzzwork.is_loaded:
             return None
         market_data = self._fuzzwork.get_market_data(type_id)
         if not market_data or not market_data.region_data:
             return None
-        # Prefer Jita (region 10000002)
-        jita_data = market_data.region_data.get(10000002)
-        if jita_data and jita_data.sell_stats:
-            return jita_data.sell_stats.median
-        # Fallback to any region with sell data
-        for region_data in market_data.region_data.values():
-            if region_data.sell_stats:
-                return region_data.sell_stats.median
+
+        # Get user preferences for market valuation
+        trade_hub = (
+            self._settings.get_market_source_station() if self._settings else "jita"
+        )
+        price_type = (
+            self._settings.get_market_price_type() if self._settings else "sell"
+        )
+
+        # Map trade hub names to region IDs
+        hub_to_region = {
+            "jita": 10000002,  # The Forge
+            "amarr": 10000043,  # Domain
+            "dodixie": 10000032,  # Sinq Laison
+            "rens": 10000030,  # Heimatar
+            "hek": 10000042,  # Metropolis
+        }
+
+        preferred_region_id = hub_to_region.get(trade_hub.lower(), 10000002)
+
+        # Try to get data from preferred region first
+        region_data = market_data.region_data.get(preferred_region_id)
+
+        # Fallback to any available region if preferred not found
+        if not region_data:
+            for region_data in market_data.region_data.values():
+                if region_data:
+                    break
+            else:
+                return None
+
+        # Extract price based on user preference
+        if price_type == "buy" and region_data.buy_stats:
+            return region_data.buy_stats.median
+        if price_type == "sell" and region_data.sell_stats:
+            return region_data.sell_stats.median
+        if price_type == "weighted":
+            # Weighted average: default 30% buy, 70% sell
+            weighted_ratio = (
+                self._settings.get_market_weighted_buy_ratio()
+                if self._settings
+                else 0.3
+            )
+            buy_price = region_data.buy_stats.median if region_data.buy_stats else 0
+            sell_price = region_data.sell_stats.median if region_data.sell_stats else 0
+            if buy_price > 0 and sell_price > 0:
+                return (buy_price * weighted_ratio) + (
+                    sell_price * (1 - weighted_ratio)
+                )
+            if sell_price > 0:
+                return sell_price
+            if buy_price > 0:
+                return buy_price
+
+        # Final fallback to sell price
+        if region_data.sell_stats:
+            return region_data.sell_stats.median
+
         return None
 
     def _restore_column_state(self) -> None:

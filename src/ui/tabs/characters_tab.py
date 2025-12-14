@@ -100,6 +100,9 @@ class CharactersTab(QWidget):
         self._cancel_token: CancelToken | None = None
         self._refresh_in_progress: bool = False
 
+        # Cache endpoint timers across widget recreations (persists when switching tabs)
+        self._endpoint_timer_cache: dict[int, dict[str, float | None]] = {}
+
         self._timers_checkbox_prev_state = True  # Remember last state for timers toggle
         self._setup_ui()
         self._connect_signals()
@@ -500,7 +503,17 @@ class CharactersTab(QWidget):
                 self._signal_bus.info_message.emit("No characters in this account.")
                 return
 
-            account_name = f"Account {account_id}" if account_id else "Unassigned"
+            # Get account name from settings or use fallback
+            account_name = "Unassigned"
+            if account_id is not None:
+                if hasattr(self._settings, "get_account_name"):
+                    account_name = (
+                        self._settings.get_account_name(account_id)
+                        or f"Account {account_id}"
+                    )
+                else:
+                    account_name = f"Account {account_id}"
+
             total_chars = len(character_ids)
             self._signal_bus.status_message.emit(
                 f"Refreshing {total_chars} characters in {account_name}..."
@@ -742,7 +755,7 @@ class CharactersTab(QWidget):
                                 exc_info=True,
                             )
 
-                    # Update character widget
+                    # Update character widget (schedule networth update as separate task)
                     char_widget = self._find_character_widget(character_id)
                     if char_widget:
                         character = next(
@@ -753,8 +766,39 @@ class CharactersTab(QWidget):
                             ),
                             None,
                         )
-                        if character:
-                            await self._load_networth(character, char_widget)
+                        if character and self._networth_service:
+                            # Schedule networth load as independent task to avoid nesting issues
+                            async def update_widget_networth():
+                                try:
+                                    latest = await self._networth_service.get_latest_networth(
+                                        character_id
+                                    )
+                                    if char_widget and not char_widget.isHidden():
+                                        existing_timers = (
+                                            char_widget._endpoint_timers.copy()
+                                            if hasattr(char_widget, "_endpoint_timers")
+                                            else {}
+                                        )
+                                        char_widget.set_networth(latest)
+                                        if (
+                                            existing_timers
+                                            and char_widget._endpoint_timers
+                                            != existing_timers
+                                        ):
+                                            char_widget.set_endpoint_timers(
+                                                existing_timers
+                                            )
+                                        char_widget._networth_snapshot = latest
+                                        char_widget.set_networth_visible(True)
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to update networth for character %s",
+                                        character_id,
+                                        exc_info=True,
+                                    )
+
+                            asyncio.create_task(update_widget_networth())
+
                             # Publish endpoint timers now that endpoints have been fetched
                             self._publish_endpoint_timers(character_id)
 
@@ -1307,8 +1351,14 @@ class CharactersTab(QWidget):
         return timers
 
     def _publish_endpoint_timers(self, character_id: int) -> dict[str, float | None]:
-        """Compute and broadcast endpoint timers for a character."""
+        """Compute and broadcast endpoint timers for a character.
+
+        Timers are cached in memory to survive widget recreations.
+        """
         timers = self._get_endpoint_timers(character_id)
+
+        # Cache timers to preserve across widget recreations (tab switches)
+        self._endpoint_timer_cache[character_id] = timers
 
         try:
             self._signal_bus.endpoint_timers_updated.emit(character_id, timers)
@@ -1352,9 +1402,15 @@ class CharactersTab(QWidget):
             self._background_tasks.add(task2)
             task2.add_done_callback(self._background_tasks.discard)
 
-        # Load endpoint timers from ESI cache on widget creation
-        # This ensures timers are displayed even before first manual refresh
-        self._publish_endpoint_timers(character.character_id)
+        # Restore cached timers if available (from previous widget or refresh)
+        # This prevents timers from resetting when switching tabs
+        character_id = character.character_id
+        if character_id in self._endpoint_timer_cache:
+            cached_timers = self._endpoint_timer_cache[character_id]
+            char_widget.set_endpoint_timers(cached_timers)
+        else:
+            # First time seeing this character - load timers from ESI cache
+            self._publish_endpoint_timers(character_id)
 
         return char_widget
 

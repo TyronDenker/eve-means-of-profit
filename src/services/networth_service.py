@@ -101,15 +101,77 @@ class NetWorthService:
             logger.debug("Networth schema migration failed", exc_info=True)
 
     def _get_market_price(self, type_id: int) -> float | None:
-        """Get market price for a type from Fuzzwork data."""
+        """Get market price for a type from Fuzzwork data respecting user preferences.
+
+        Respects:
+        - Trade hub selection (Jita, Amarr, Dodixie, Rens, Hek)
+        - Price type (buy, sell, weighted)
+        """
         if not self._fuzzwork or not self._fuzzwork.is_loaded:
             return None
         market_data = self._fuzzwork.get_market_data(type_id)
         if not market_data or not market_data.region_data:
             return None
-        for region_data in market_data.region_data.values():
-            if region_data.sell_stats:
-                return region_data.sell_stats.median
+
+        # Get user preferences for market valuation
+        trade_hub = (
+            self._settings.get_market_source_station() if self._settings else "jita"
+        )
+        price_type = (
+            self._settings.get_market_price_type() if self._settings else "sell"
+        )
+
+        # Map trade hub names to region IDs
+        hub_to_region = {
+            "jita": 10000002,  # The Forge
+            "amarr": 10000043,  # Domain
+            "dodixie": 10000032,  # Sinq Laison
+            "rens": 10000030,  # Heimatar
+            "hek": 10000042,  # Metropolis
+        }
+
+        preferred_region_id = hub_to_region.get(
+            trade_hub.lower(), 10000002
+        )  # Default to Jita
+
+        # Try to get data from preferred region first
+        region_data = market_data.region_data.get(preferred_region_id)
+
+        # Fallback to any available region if preferred not found
+        if not region_data:
+            for region_data in market_data.region_data.values():
+                if region_data:
+                    break
+            else:
+                return None
+
+        # Extract price based on user preference
+        if price_type == "buy" and region_data.buy_stats:
+            return region_data.buy_stats.median
+        if price_type == "sell" and region_data.sell_stats:
+            return region_data.sell_stats.median
+        if price_type == "weighted":
+            # Weighted average: default 30% buy, 70% sell
+            weighted_ratio = (
+                self._settings.get_market_weighted_buy_ratio()
+                if self._settings
+                else 0.3
+            )
+            buy_price = region_data.buy_stats.median if region_data.buy_stats else 0
+            sell_price = region_data.sell_stats.median if region_data.sell_stats else 0
+            if buy_price > 0 and sell_price > 0:
+                return (buy_price * weighted_ratio) + (
+                    sell_price * (1 - weighted_ratio)
+                )
+            if sell_price > 0:
+                return sell_price
+            if buy_price > 0:
+                return buy_price
+
+        # Final fallback to sell price
+        if region_data.sell_stats:
+            return region_data.sell_stats.median
+
         return None
 
     async def _get_price_history_price(self, type_id: int) -> float | None:
@@ -502,6 +564,24 @@ class NetWorthService:
             Snapshot ID
         """
         await self._ensure_schema()
+
+        # Ensure snapshots always belong to a group so graph aggregation picks them up
+        if snapshot_group_id is None:
+            try:
+                snapshot_group_id = await self.create_snapshot_group(
+                    account_id=None,
+                    refresh_source="manual",
+                    label="Manual snapshot",
+                )
+                logger.debug(
+                    "Created snapshot group %s for manual networth save",
+                    snapshot_group_id,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to create snapshot group for manual save", exc_info=True
+                )
+
         snapshot = await self.calculate_networth(character_id)
         snapshot.snapshot_group_id = snapshot_group_id
 

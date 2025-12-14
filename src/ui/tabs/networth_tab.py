@@ -104,6 +104,7 @@ class NetworthTab(QWidget):
         self._snapshots_by_character: dict[int, list[Any]] = {}
         self._all_snapshots: list[Any] = []
         self._selected_location_metadata: dict[int, AssetLocationOption] = {}
+        self._date_range_user_set: bool = False
 
         # Track selection updates from Characters tab and centralized character loading
         try:
@@ -410,6 +411,8 @@ class NetworthTab(QWidget):
 
     def _on_date_preset(self, days: int | None) -> None:
         """Handle quick date preset button clicks."""
+        # Presets are a user action; lock the auto-ranging behavior
+        self._date_range_user_set = True
         now = datetime.now(UTC)
         self._date_to = now
         self._set_date_edit(self.date_to_edit, self._date_to)
@@ -442,11 +445,13 @@ class NetworthTab(QWidget):
         return self._date_from, self._date_to
 
     def _on_from_date_changed(self, qdate: QDate) -> None:
+        self._date_range_user_set = True
         self._date_from = self._qdate_to_datetime(qdate, start_of_day=True)
         self._ensure_date_order()
         self._schedule_plot_refresh()
 
     def _on_to_date_changed(self, qdate: QDate) -> None:
+        self._date_range_user_set = True
         self._date_to = self._qdate_to_datetime(qdate, start_of_day=False)
         self._ensure_date_order()
         self._schedule_plot_refresh()
@@ -610,7 +615,10 @@ class NetworthTab(QWidget):
     @asyncSlot()
     @asyncSlot()
     async def _on_refresh_graph(self) -> None:
-        await self._plot()
+        if self._date_range_user_set:
+            await self._plot()
+        else:
+            await self._plot_and_set_date_bounds()
 
     async def _get_all_character_ids(self) -> list[int]:
         # Return only selected checkboxes - if none selected, return empty list
@@ -629,12 +637,16 @@ class NetworthTab(QWidget):
             logger.debug("Failed to query characters", exc_info=True)
             return []
 
-    async def _load_all_snapshots(self) -> list[Any]:
+    async def _load_all_snapshots(
+        self, start: datetime | None = None, end: datetime | None = None
+    ) -> list[Any]:
         # Pull a reasonable number of snapshots per character and combine
         try:
             ids = await self._get_all_character_ids()
             all_snaps = []
-            start, end = self._current_date_filters()
+            # Allow callers to override the date window (for auto-ranging)
+            if start is None or end is None:
+                start, end = self._current_date_filters()
             for cid in ids:
                 snaps = await self._networth.get_networth_history(
                     cid,
@@ -743,15 +755,33 @@ class NetworthTab(QWidget):
         PLEX is displayed as a separate series.
         """
         try:
+            # If the user hasn't locked the date range, query without an upper bound
             start, end = self._current_date_filters()
+            query_end = end if self._date_range_user_set else None
 
             # Load both snapshot groups for graph and individual snapshots for editing
             (
                 groups,
                 char_snaps_by_group,
                 plex_snaps_by_group,
-            ) = await self._load_snapshot_groups_and_data(start, end)
-            await self._load_all_snapshots()  # Keep for edit dialog compatibility
+            ) = await self._load_snapshot_groups_and_data(start, query_end)
+            await self._load_all_snapshots(
+                start=start, end=query_end
+            )  # Keep for edit dialog compatibility
+
+            # If the user hasn't manually set a date range, auto-extend to latest data
+            if groups and not self._date_range_user_set:
+                try:
+                    latest_group_time = max(
+                        datetime.fromisoformat(str(g["created_at"]))
+                        for g in groups
+                        if g.get("created_at")
+                    )
+                    if self._date_to is None or latest_group_time > self._date_to:
+                        self._date_to = latest_group_time
+                        self._set_date_edit(self.date_to_edit, self._date_to)
+                except Exception:
+                    logger.debug("Failed to auto-extend date range", exc_info=True)
 
             # Clear existing plot and legend
             self._plot_widget.clear()
@@ -801,10 +831,10 @@ class NetworthTab(QWidget):
 
             for group in groups:
                 group_id = int(group["snapshot_group_id"])
-                ordered_group_ids.append(group_id)
                 try:
                     group_time = datetime.fromisoformat(str(group["created_at"]))
                 except Exception:
+                    logger.debug("Failed to parse group time for group %d", group_id)
                     continue
 
                 # Initialize category buckets
@@ -983,6 +1013,20 @@ class NetworthTab(QWidget):
                         plex_count,
                     )
 
+                # Calculate total value for this group to validate data
+                group_total = sum(bucket_values.values())
+
+                # Skip groups with zero or invalid total to prevent graph zero-drops
+                # This handles deleted snapshots and incomplete data gracefully
+                if group_total <= 0:
+                    logger.debug(
+                        "Skipping group %d with zero/invalid total (deleted or incomplete data)",
+                        group_id,
+                    )
+                    continue
+
+                # Only add valid groups to the plot data
+                ordered_group_ids.append(group_id)
                 group_timestamps.append(group_time.timestamp())
                 group_data[group_id] = bucket_values
                 group_metadata[group_id] = {
@@ -1102,6 +1146,12 @@ class NetworthTab(QWidget):
                     antialias=True,
                 )
                 self._last_plot_cache["series"]["Total"] = total_values
+
+            logger.info(
+                "Networth graph completed: %d groups, %d series",
+                len(ordered_group_ids),
+                len(plotted_labels),
+            )
 
             self._update_delta_label()
 
@@ -1366,7 +1416,10 @@ class NetworthTab(QWidget):
                         "Failed to delete snapshot; see logs."
                     )
 
-            asyncio.create_task(_apply())
+            # Track the task to ensure it completes
+            task = asyncio.create_task(_apply())
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except Exception:
             logger.debug("Failed to delete snapshot", exc_info=True)
 
@@ -1376,18 +1429,19 @@ class NetworthTab(QWidget):
         Args:
             characters: List of CharacterInfo objects from central loader
         """
-        logger.debug(
-            "Networth tab received %d characters, loading graph", len(characters)
+        logger.info(
+            "Networth tab received %d characters, refreshing graph", len(characters)
         )
         try:
             self._rebuild_character_filters(characters)
         except Exception:
             logger.debug("Failed to rebuild character filters", exc_info=True)
         try:
-            # Use ensure_future for safer task creation across Python versions
-            task = asyncio.ensure_future(self._plot_and_set_date_bounds())
+            # Schedule graph refresh as background task
+            task = asyncio.create_task(self._plot_and_set_date_bounds())
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
+            logger.debug("Scheduled networth graph refresh task")
         except Exception as e:
             logger.error("Failed to schedule graph plotting: %s", e)
 
@@ -1396,7 +1450,7 @@ class NetworthTab(QWidget):
         await self._plot()
         try:
             # Set the date_from selector to the earliest snapshot date
-            if self._all_snapshots:
+            if self._all_snapshots and not self._date_range_user_set:
                 earliest = min(
                     s.snapshot_time
                     for s in self._all_snapshots
@@ -1410,6 +1464,16 @@ class NetworthTab(QWidget):
                     self.date_from_edit.setMinimumDate(
                         QDate(earliest.year, earliest.month, earliest.day)
                     )
+            # Update the "to" date to the latest snapshot if user hasn't overridden
+            if self._all_snapshots and not self._date_range_user_set:
+                latest = max(
+                    s.snapshot_time
+                    for s in self._all_snapshots
+                    if hasattr(s, "snapshot_time")
+                )
+                if latest:
+                    self._date_to = latest
+                    self._set_date_edit(self.date_to_edit, latest)
         except Exception:
             logger.debug("Failed to set date bounds", exc_info=True)
 

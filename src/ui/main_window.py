@@ -260,6 +260,15 @@ class MainWindow(QMainWindow):
                 # Update the AssetsTab with the fuzzwork_provider
                 if hasattr(self, "assets_tab") and self.assets_tab:
                     self.assets_tab._fuzzwork = self._fuzzwork_provider
+                    try:
+                        # Reprice assets now that market data is available
+                        if hasattr(self.assets_tab, "on_fuzzwork_ready"):
+                            self.assets_tab.on_fuzzwork_ready()
+                    except Exception:
+                        logger.debug(
+                            "Failed to notify assets tab of fuzzwork readiness",
+                            exc_info=True,
+                        )
 
                 # Replace networth placeholder with real tab
                 if (

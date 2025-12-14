@@ -45,6 +45,11 @@ class SignalBus(QObject):
     # Endpoint timer updates
     endpoint_timers_updated = pyqtSignal(int, dict)  # (character_id, timers dict)
 
+    # Market preference signals
+    market_preferences_changed = (
+        pyqtSignal()
+    )  # Emitted when trade hub or price type changes
+
     # Account management signals
     account_changed = (
         pyqtSignal()

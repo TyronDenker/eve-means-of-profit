@@ -313,6 +313,117 @@ async def get_items_with_history(repo: Repository) -> list[int]:
     return [row["type_id"] for row in rows]
 
 
+async def get_latest_snapshot_prices(
+    repo: Repository,
+    region_id: int = JITA_REGION_ID,
+    price_type: str = "sell",
+    weighted_buy_ratio: float = 0.3,
+) -> dict[int, float]:
+    """Load prices from latest snapshot, applying market preferences.
+
+    This enables instant price loading at startup without waiting for Fuzzwork.
+    Prices are loaded from the most recent price snapshot in the database,
+    with market preferences (region, price type) applied.
+
+    Args:
+        repo: Repository instance
+        region_id: Region ID (default: Jita)
+        price_type: "buy", "sell", or "weighted"
+        weighted_buy_ratio: Ratio for weighted price calculation (0.3 = 30% buy, 70% sell)
+
+    Returns:
+        Dictionary mapping type_id -> price (float)
+    """
+    # Get the latest snapshot_id
+    snapshot_row = await repo.fetchone(
+        """
+        SELECT snapshot_id FROM price_snapshots
+        ORDER BY snapshot_time DESC
+        LIMIT 1
+        """
+    )
+
+    if not snapshot_row:
+        logger.debug("No price snapshots found in database")
+        return {}
+
+    snapshot_id = snapshot_row["snapshot_id"]
+
+    # Fetch all prices from this snapshot for the target region
+    rows = await repo.fetchall(
+        """
+        SELECT
+            type_id,
+            buy_weighted_average, buy_median, buy_max_price,
+            sell_weighted_average, sell_median, sell_max_price,
+            custom_buy_price, custom_sell_price
+        FROM price_history
+        WHERE snapshot_id = ? AND region_id = ?
+        """,
+        (snapshot_id, region_id),
+    )
+
+    prices: dict[int, float] = {}
+
+    for row in rows:
+        type_id = row["type_id"]
+        price = None
+
+        # Custom prices take precedence
+        if row["custom_sell_price"] is not None:
+            price = float(row["custom_sell_price"])
+        elif row["custom_buy_price"] is not None:
+            price = float(row["custom_buy_price"])
+        # Then apply price_type preference
+        elif price_type == "buy":
+            candidates = [
+                row["buy_median"],
+                row["buy_weighted_average"],
+                row["buy_max_price"],
+            ]
+            price = next(
+                (float(v) for v in candidates if v is not None and v > 0), None
+            )
+        elif price_type == "sell":
+            candidates = [
+                row["sell_median"],
+                row["sell_weighted_average"],
+                row["sell_max_price"],
+            ]
+            price = next(
+                (float(v) for v in candidates if v is not None and v > 0), None
+            )
+        elif price_type == "weighted":
+            buy_price = None
+            sell_price = None
+            if row["buy_median"] is not None and row["buy_median"] > 0:
+                buy_price = float(row["buy_median"])
+            if row["sell_median"] is not None and row["sell_median"] > 0:
+                sell_price = float(row["sell_median"])
+
+            if buy_price and sell_price:
+                price = (buy_price * weighted_buy_ratio) + (
+                    sell_price * (1 - weighted_buy_ratio)
+                )
+            elif sell_price:
+                price = sell_price
+            elif buy_price:
+                price = buy_price
+
+        if price and price > 0:
+            prices[type_id] = price
+
+    logger.debug(
+        "Loaded %d prices from snapshot %d (region %d, type=%s)",
+        len(prices),
+        snapshot_id,
+        region_id,
+        price_type,
+    )
+
+    return prices
+
+
 async def delete_old_prices(repo: Repository, days: int = 90) -> int:
     """Delete price history older than specified days.
 
@@ -361,6 +472,7 @@ __all__ = [
     "get_items_with_history",
     "get_jita_prices",
     "get_latest_jita_price",
+    "get_latest_snapshot_prices",
     "get_price_history",
     "get_snapshots",
     "save_snapshot",

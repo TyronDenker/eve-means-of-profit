@@ -115,7 +115,7 @@ async def save_snapshot(
 
 
 async def get_current_assets(repo: Repository, character_id: int) -> list[EveAsset]:
-    """Get current assets for a character.
+    """Get current assets for a character, excluding removed assets.
 
     Args:
         repo: Repository instance
@@ -124,12 +124,32 @@ async def get_current_assets(repo: Repository, character_id: int) -> list[EveAss
     Returns:
         List of current assets
     """
+    # Check if removed_at column exists before filtering on it
+    try:
+        table_info = await repo.get_table_info("current_assets")
+        has_removed_at = any(
+            col[1] == "removed_at"
+            if isinstance(col, tuple)
+            else col.get("name") == "removed_at"
+            for col in table_info
+        )
+    except Exception:
+        has_removed_at = False
+
+    # Build query based on whether removed_at column exists
+    if has_removed_at:
+        where_clause = (
+            "WHERE character_id = ? AND (removed_at IS NULL OR removed_at = '')"
+        )
+    else:
+        where_clause = "WHERE character_id = ?"
+
     rows = await repo.fetchall(
-        """
+        f"""
         SELECT item_id, type_id, quantity, location_id, location_type,
                location_flag, is_singleton, is_blueprint_copy
         FROM current_assets
-        WHERE character_id = ?
+        {where_clause}
         """,
         (character_id,),
     )
