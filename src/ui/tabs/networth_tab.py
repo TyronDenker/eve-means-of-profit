@@ -793,12 +793,15 @@ class NetworthTab(QWidget):
                         )
 
             # Build aggregation per group
+            # Keep track of group_ids in order to maintain timestamp-data alignment
+            ordered_group_ids: list[int] = []
             group_timestamps: list[float] = []
             group_data: dict[int, dict[str, float]] = {}
             group_metadata: dict[int, dict[str, Any]] = {}
 
             for group in groups:
                 group_id = int(group["snapshot_group_id"])
+                ordered_group_ids.append(group_id)
                 try:
                     group_time = datetime.fromisoformat(str(group["created_at"]))
                 except Exception:
@@ -810,10 +813,8 @@ class NetworthTab(QWidget):
                 }
                 bucket_values["PLEX"] = 0.0  # Add PLEX category
 
-                # Get latest snapshot per character up to AND INCLUDING this group
-                # For each character, get their most recent snapshot where:
-                # - The snapshot is from this group OR an earlier group (group_id <= current)
-                # - The snapshot time is at or before this group's time
+                # Get snapshot per character FROM THIS GROUP ONLY
+                # For each character, get the snapshot from the current snapshot_group_id
                 try:
                     char_snaps = await self._networth._repo.fetchall(
                         """
@@ -822,27 +823,17 @@ class NetworthTab(QWidget):
                             total_asset_value,
                             wallet_balance, market_escrow, market_sell_value,
                             contract_collateral, contract_value, industry_job_value, plex_vault
-                        FROM (
-                            SELECT ns.*,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY ns.character_id
-                                       ORDER BY ns.snapshot_time DESC
-                                   ) as rn
-                            FROM networth_snapshots ns
-                            WHERE ns.snapshot_group_id IS NOT NULL 
-                              AND (
-                                  (ns.snapshot_group_id < ?)
-                                  OR (ns.snapshot_group_id = ? AND ns.snapshot_time <= ?)
-                              )
-                        ) t
-                        WHERE rn = 1
+                        FROM networth_snapshots
+                        WHERE snapshot_group_id = ?
                         ORDER BY character_id
                         """,
-                        (group_id, group_id, group_time.isoformat()),
+                        (group_id,),
                     )
                     char_snaps = [NetWorthSnapshot(**dict(s)) for s in char_snaps]
                 except Exception:
-                    logger.debug("Failed to get snapshots for group %d", group_id, exc_info=True)
+                    logger.debug(
+                        "Failed to get snapshots for group %d", group_id, exc_info=True
+                    )
                     char_snaps = []
 
                 # Aggregate character snapshots
@@ -857,33 +848,25 @@ class NetworthTab(QWidget):
                             value = 0.0
                         bucket_values[label] = bucket_values.get(label, 0.0) + value
 
-                # Aggregate PLEX snapshots - get latest per account up to AND INCLUDING this group
+                # Aggregate PLEX snapshots - get FROM THIS GROUP ONLY
                 try:
                     plex_snaps = await self._networth._repo.fetchall(
                         """
                         SELECT plex_snapshot_id, account_id, snapshot_group_id, snapshot_time,
                                plex_units, plex_unit_price, plex_total_value
-                        FROM (
-                            SELECT aps.*,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY aps.account_id
-                                       ORDER BY aps.snapshot_time DESC
-                                   ) as rn
-                            FROM account_plex_snapshots aps
-                            WHERE aps.snapshot_group_id IS NOT NULL 
-                              AND (
-                                  (aps.snapshot_group_id < ?)
-                                  OR (aps.snapshot_group_id = ? AND aps.snapshot_time <= ?)
-                              )
-                        ) t
-                        WHERE rn = 1
+                        FROM account_plex_snapshots
+                        WHERE snapshot_group_id = ?
                         ORDER BY account_id
                         """,
-                        (group_id, group_id, group_time.isoformat()),
+                        (group_id,),
                     )
                     plex_snaps = [dict(p) for p in plex_snaps]
                 except Exception:
-                    logger.debug("Failed to get PLEX snapshots for group %d", group_id, exc_info=True)
+                    logger.debug(
+                        "Failed to get PLEX snapshots for group %d",
+                        group_id,
+                        exc_info=True,
+                    )
                     plex_snaps = []
 
                 plex_total = 0.0
@@ -936,7 +919,7 @@ class NetworthTab(QWidget):
                 if not self._category_visibility.get(label, True):
                     continue
 
-                values = [group_data[gid][label] for gid in sorted(group_data.keys())]
+                values = [group_data[gid][label] for gid in ordered_group_ids]
                 if any(v > 0 for v in values):
                     color = self.COLOR_MAP.get(label, "#000000")
                     line_style = self.LINE_STYLE_MAP.get(label, "solid")
@@ -968,8 +951,7 @@ class NetworthTab(QWidget):
             # Plot PLEX as separate series (if visible)
             if self._category_visibility.get("PLEX", True):
                 plex_values = [
-                    group_data[gid].get("PLEX", 0.0)
-                    for gid in sorted(group_data.keys())
+                    group_data[gid].get("PLEX", 0.0) for gid in ordered_group_ids
                 ]
                 logger.debug("PLEX values for plot: %s", plex_values)
                 logger.debug("Any PLEX > 0? %s", any(v > 0 for v in plex_values))
@@ -1012,7 +994,7 @@ class NetworthTab(QWidget):
             if plotted_labels:
                 total_values = [
                     sum(group_data[gid].get(lbl, 0.0) for lbl in plotted_labels)
-                    for gid in sorted(group_data.keys())
+                    for gid in ordered_group_ids
                 ]
                 pen = pg.mkPen(color="#000000", width=2.5, style=Qt.PenStyle.SolidLine)
                 self._plot_widget.plot(
@@ -1164,9 +1146,53 @@ class NetworthTab(QWidget):
 
                     # Find group metadata for this snapshot
                     group_metadata = {}
-                    if hasattr(snapshot, "snapshot_group_id") and snapshot.snapshot_group_id:
-                        group_meta_dict = self._last_plot_cache.get("group_metadata", {})
-                        group_metadata = group_meta_dict.get(snapshot.snapshot_group_id, {})
+                    if (
+                        hasattr(snapshot, "snapshot_group_id")
+                        and snapshot.snapshot_group_id
+                    ):
+                        group_meta_dict = self._last_plot_cache.get(
+                            "group_metadata", {}
+                        )
+                        group_metadata = group_meta_dict.get(
+                            snapshot.snapshot_group_id, {}
+                        )
+
+                    # Fetch accounts and PLEX snapshots for this group
+                    accounts = {}
+                    plex_snapshots_by_account = {}
+                    try:
+                        from utils.settings_manager import get_settings_manager
+
+                        settings = get_settings_manager()
+                        all_accounts = settings.get_accounts()
+                        for account_id, account_data in all_accounts.items():
+                            accounts[account_id] = account_data
+
+                        # Load PLEX snapshots for this group
+                        if (
+                            hasattr(snapshot, "snapshot_group_id")
+                            and snapshot.snapshot_group_id
+                        ):
+                            plex_snaps = await self._networth._repo.fetchall(
+                                """
+                                    SELECT plex_snapshot_id, account_id, snapshot_group_id, snapshot_time,
+                                           plex_units, plex_unit_price, plex_total_value
+                                    FROM account_plex_snapshots
+                                    WHERE snapshot_group_id = ?
+                                    ORDER BY account_id
+                                    """,
+                                (snapshot.snapshot_group_id,),
+                            )
+                            for plex_snap in plex_snaps:
+                                plex_dict = dict(plex_snap)
+                                plex_snapshots_by_account[plex_dict["account_id"]] = (
+                                    plex_dict
+                                )
+                    except Exception:
+                        logger.debug(
+                            "Failed to load accounts/PLEX for edit dialog",
+                            exc_info=True,
+                        )
 
                     dlg = EditSnapshotDialog(
                         snapshot,
@@ -1174,11 +1200,47 @@ class NetworthTab(QWidget):
                         characters=characters,
                         snapshots_by_character=snapshots_by_char,
                         group_metadata=group_metadata,
+                        networth_service=self._networth,
+                        accounts=accounts,
+                        plex_snapshots_by_account=plex_snapshots_by_account,
                     )
                     if dlg.exec():
                         updated = dlg.get_updated_snapshot()
                         try:
                             await self._networth.update_snapshot(updated)
+
+                            # Save edited PLEX snapshots if any
+                            edited_plex = dlg.get_edited_plex_snapshots()
+                            for account_id, plex_data in edited_plex.items():
+                                try:
+                                    plex_id = plex_data.get("plex_snapshot_id")
+                                    if plex_id:
+                                        # Update existing PLEX snapshot
+                                        await self._networth._repo.execute(
+                                            """
+                                            UPDATE account_plex_snapshots
+                                            SET plex_units = ?, plex_unit_price = ?, plex_total_value = ?
+                                            WHERE plex_snapshot_id = ?
+                                            """,
+                                            (
+                                                plex_data["units"],
+                                                plex_data["price"],
+                                                plex_data["units"] * plex_data["price"],
+                                                plex_id,
+                                            ),
+                                        )
+                                        await self._networth._repo.commit()
+                                        logger.info(
+                                            "Updated PLEX snapshot %d for account %d",
+                                            plex_id,
+                                            account_id,
+                                        )
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to update PLEX snapshot for account %d",
+                                        account_id,
+                                    )
+
                             await self._plot()
                             self._signal_bus.info_message.emit("Snapshot updated")
                         except Exception:

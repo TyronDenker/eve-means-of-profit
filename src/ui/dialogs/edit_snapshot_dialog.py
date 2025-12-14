@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import logging
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
@@ -22,6 +23,8 @@ from ui.styles import COLORS, AppStyles
 
 if TYPE_CHECKING:
     from models.app import CharacterInfo
+
+logger = logging.getLogger(__name__)
 
 
 class EditSnapshotDialog(QDialog):
@@ -34,6 +37,9 @@ class EditSnapshotDialog(QDialog):
         characters: list[CharacterInfo] | None = None,
         snapshots_by_character: dict[int, NetWorthSnapshot] | None = None,
         group_metadata: dict | None = None,
+        networth_service=None,
+        accounts: dict[int, dict] | None = None,
+        plex_snapshots_by_account: dict[int, dict] | None = None,
     ) -> None:
         super().__init__(parent)
         self.snapshot = snapshot
@@ -43,7 +49,13 @@ class EditSnapshotDialog(QDialog):
         # Map of character_id -> snapshot for that character at the same time
         self._snapshots_by_character = snapshots_by_character or {}
         self._group_metadata = group_metadata or {}
-        
+        self._networth_service = networth_service
+        self._accounts = accounts or {}  # account_id -> {name, plex_units}
+        self._plex_snapshots_by_account = plex_snapshots_by_account or {}
+        self._edited_plex_snapshots: dict[
+            int, dict
+        ] = {}  # account_id -> {units, price}
+
         self.setWindowTitle("Edit Snapshot")
         self.setModal(True)
         self.setMinimumWidth(450)
@@ -64,11 +76,12 @@ class EditSnapshotDialog(QDialog):
         refresh_source = self._group_metadata.get("refresh_source", "unknown")
         account_id = self._group_metadata.get("account_id")
         snapshot_time = self.snapshot.snapshot_time
-        
+
         # Get account name if available
         account_name = None
         try:
             from utils.settings_manager import get_settings_manager
+
             settings = get_settings_manager()
             if account_id:
                 account_name = settings.get_account_name(account_id)
@@ -119,7 +132,7 @@ class EditSnapshotDialog(QDialog):
                                 age_suffix = f" ({hours}h {minutes}m old)"
                             else:
                                 age_suffix = f" ({minutes}m old)"
-                    
+
                     self.character_combo.addItem(f"{name}{age_suffix}", cid)
 
             # Pre-select the snapshot's character
@@ -203,11 +216,70 @@ class EditSnapshotDialog(QDialog):
         plex_label.setStyleSheet(f"color: {COLORS.TEXT_SECONDARY}; margin-top: 10px;")
         layout.addWidget(plex_label)
 
-        # TODO: Add PLEX account selector and value editor
-        # For now, add a note
-        plex_note = QLabel("PLEX editing not yet implemented - use account manager")
-        plex_note.setStyleSheet(f"color: {COLORS.TEXT_MUTED}; font-style: italic; margin-bottom: 10px;")
-        layout.addWidget(plex_note)
+        # Account selector for PLEX
+        if self._accounts:
+            self.plex_account_combo = QComboBox()
+            self.plex_account_combo.setStyleSheet(AppStyles.COMBOBOX)
+
+            # Add accounts to combo box
+            for account_id, account_data in self._accounts.items():
+                account_name = account_data.get("name", f"Account {account_id}")
+                self.plex_account_combo.addItem(account_name, account_id)
+
+            # Connect signal to load PLEX data when account selection changes
+            self.plex_account_combo.currentIndexChanged.connect(
+                self._on_plex_account_changed
+            )
+
+            plex_account_layout = QHBoxLayout()
+            plex_account_label = QLabel("Select Account:")
+            plex_account_label.setMinimumWidth(100)
+            plex_account_layout.addWidget(plex_account_label)
+            plex_account_layout.addWidget(self.plex_account_combo, stretch=1)
+            layout.addLayout(plex_account_layout)
+
+            # PLEX value form
+            plex_form = QFormLayout()
+
+            self.plex_units_spin = QSpinBox()
+            self.plex_units_spin.setRange(0, 1000000)
+            self.plex_units_spin.setValue(0)
+            self.plex_units_spin.setStyleSheet(AppStyles.DOUBLE_SPINBOX)
+            plex_form.addRow("PLEX Units:", self.plex_units_spin)
+
+            self.plex_price_spin = QDoubleSpinBox()
+            self.plex_price_spin.setRange(0, 1e15)
+            self.plex_price_spin.setDecimals(2)
+            self.plex_price_spin.setValue(0.0)
+            self.plex_price_spin.setSuffix(" ISK")
+            self.plex_price_spin.setStyleSheet(AppStyles.DOUBLE_SPINBOX)
+            plex_form.addRow("Price per PLEX:", self.plex_price_spin)
+
+            self.plex_total_label = QLabel()
+            self.plex_total_label.setStyleSheet(
+                f"font-weight: bold; color: {COLORS.TEXT_PRIMARY};"
+            )
+            plex_form.addRow("PLEX Total Value:", self.plex_total_label)
+
+            layout.addLayout(plex_form)
+
+            # Connect spinboxes to update PLEX total
+            self.plex_units_spin.valueChanged.connect(self._update_plex_total)
+            self.plex_price_spin.valueChanged.connect(self._update_plex_total)
+
+            # Load first account's PLEX data if available
+            if self.plex_account_combo.count() > 0:
+                self._on_plex_account_changed(0)
+        else:
+            plex_note = QLabel("No accounts configured for PLEX editing")
+            plex_note.setStyleSheet(
+                f"color: {COLORS.TEXT_MUTED}; font-style: italic; margin-bottom: 10px;"
+            )
+            layout.addWidget(plex_note)
+            self.plex_account_combo = None
+            self.plex_units_spin = None
+            self.plex_price_spin = None
+            self.plex_total_label = None
 
         # Total display (character data only, PLEX is separate)
         self.total_label = QLabel()
@@ -256,6 +328,58 @@ class EditSnapshotDialog(QDialog):
             + self.industry_spin.value()
         )
         self.total_label.setText(f"Character Total: {total:,.2f} ISK")
+
+    def _update_plex_total(self) -> None:
+        """Update the PLEX total value display."""
+        if self.plex_total_label is None:
+            return
+        units = self.plex_units_spin.value()
+        price = self.plex_price_spin.value()
+        total = units * price
+        self.plex_total_label.setText(f"{total:,.2f} ISK")
+
+    def _on_plex_account_changed(self, index: int) -> None:
+        """Handle PLEX account selection change - load that account's PLEX data."""
+        if self.plex_account_combo is None or index < 0:
+            return
+
+        selected_account_id = self.plex_account_combo.itemData(index)
+        if selected_account_id is None:
+            return
+
+        # Load the PLEX snapshot for this account if available
+        if selected_account_id in self._plex_snapshots_by_account:
+            plex_snap = self._plex_snapshots_by_account[selected_account_id]
+            self._load_plex_values(selected_account_id, plex_snap)
+        else:
+            # No existing PLEX snapshot for this account
+            self.plex_units_spin.setValue(0)
+            self.plex_price_spin.setValue(0.0)
+
+    def _load_plex_values(self, account_id: int, plex_snap: dict) -> None:
+        """Load PLEX values from a snapshot into the spinboxes."""
+        # Block signals to prevent redundant total updates
+        for spinbox in [self.plex_units_spin, self.plex_price_spin]:
+            spinbox.blockSignals(True)
+
+        plex_units = int(plex_snap.get("plex_units", 0) or 0)
+        plex_price = float(plex_snap.get("plex_unit_price", 0.0) or 0.0)
+
+        self.plex_units_spin.setValue(plex_units)
+        self.plex_price_spin.setValue(plex_price)
+
+        # Store this for later saving
+        self._edited_plex_snapshots[account_id] = {
+            "units": plex_units,
+            "price": plex_price,
+        }
+
+        # Unblock signals
+        for spinbox in [self.plex_units_spin, self.plex_price_spin]:
+            spinbox.blockSignals(False)
+
+        # Update total after loading
+        self._update_plex_total()
 
     def get_selected_character_id(self) -> int:
         """Get the currently selected character ID from the dropdown."""
@@ -337,3 +461,32 @@ class EditSnapshotDialog(QDialog):
             industry_job_value=self.industry_spin.value(),
             plex_vault=0.0,  # PLEX is account-level, not character-level
         )
+
+    def get_edited_plex_snapshots(self) -> dict[int, dict]:
+        """Get PLEX snapshots that were edited in this dialog.
+
+        Returns:
+            Dict mapping account_id -> {units, price, snapshot_data} for edited accounts
+        """
+        result = {}
+
+        # Collect all PLEX snapshots that were modified
+        for account_id, plex_snap in self._plex_snapshots_by_account.items():
+            if account_id in self._edited_plex_snapshots:
+                edited = self._edited_plex_snapshots[account_id]
+                original_units = int(plex_snap.get("plex_units", 0) or 0)
+                original_price = float(plex_snap.get("plex_unit_price", 0.0) or 0.0)
+
+                # Only include if values changed
+                if (
+                    edited["units"] != original_units
+                    or edited["price"] != original_price
+                ):
+                    result[account_id] = {
+                        "plex_snapshot_id": plex_snap.get("plex_snapshot_id"),
+                        "units": edited["units"],
+                        "price": edited["price"],
+                        "snapshot_data": plex_snap,  # Original snapshot data for reference
+                    }
+
+        return result
