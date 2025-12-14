@@ -836,6 +836,47 @@ class NetworthTab(QWidget):
                     )
                     char_snaps = []
 
+                # For characters not in this group, get their latest snapshot up to group_time
+                char_snaps_by_id = {snap.character_id: snap for snap in char_snaps}
+                chars_with_missing_snaps = [
+                    cid for cid in ids if cid not in char_snaps_by_id
+                ]
+
+                if chars_with_missing_snaps:
+                    try:
+                        # Get latest snapshot for each missing character up to group_time
+                        fallback_snaps = await self._networth._repo.fetchall(
+                            f"""
+                            SELECT
+                                snapshot_id, character_id, account_id, snapshot_group_id, snapshot_time,
+                                total_asset_value,
+                                wallet_balance, market_escrow, market_sell_value,
+                                contract_collateral, contract_value, industry_job_value, plex_vault
+                            FROM (
+                                SELECT ns.*,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY ns.character_id
+                                           ORDER BY ns.snapshot_time DESC
+                                       ) as rn
+                                FROM networth_snapshots ns
+                                WHERE ns.character_id IN ({",".join("?" for _ in chars_with_missing_snaps)})
+                                  AND ns.snapshot_time <= ?
+                            ) t
+                            WHERE rn = 1
+                            """,
+                            tuple(chars_with_missing_snaps + [group_time.isoformat()]),
+                        )
+                        for snap_row in fallback_snaps:
+                            fallback_snap = NetWorthSnapshot(**dict(snap_row))
+                            char_snaps.append(fallback_snap)
+                            char_snaps_by_id[fallback_snap.character_id] = fallback_snap
+                    except Exception:
+                        logger.debug(
+                            "Failed to get fallback snapshots for group %d",
+                            group_id,
+                            exc_info=True,
+                        )
+
                 # Aggregate character snapshots
                 for snap in char_snaps:
                     for field, label in self.CATEGORY_FIELDS:
@@ -868,6 +909,59 @@ class NetworthTab(QWidget):
                         exc_info=True,
                     )
                     plex_snaps = []
+
+                # For accounts missing PLEX snapshots in this group, get their latest up to group_time
+                plex_snaps_by_account = {p.get("account_id"): p for p in plex_snaps}
+                try:
+                    # Get ALL account IDs that have any PLEX snapshots (not just current group)
+                    all_plex_accounts = await self._networth._repo.fetchall(
+                        """
+                        SELECT DISTINCT account_id FROM account_plex_snapshots
+                        WHERE account_id IS NOT NULL
+                        """
+                    )
+                    all_plex_account_ids = [
+                        int(row[0]) for row in all_plex_accounts if row[0] is not None
+                    ]
+
+                    # Find accounts with PLEX in current group
+                    plex_group_accounts = set(p.get("account_id") for p in plex_snaps)
+
+                    # Get fallback PLEX snapshots for accounts missing them
+                    missing_plex_accounts = [
+                        aid
+                        for aid in all_plex_account_ids
+                        if aid not in plex_group_accounts
+                    ]
+
+                    if missing_plex_accounts:
+                        fallback_plex_snaps = await self._networth._repo.fetchall(
+                            f"""
+                            SELECT plex_snapshot_id, account_id, snapshot_group_id, snapshot_time,
+                                   plex_units, plex_unit_price, plex_total_value
+                            FROM (
+                                SELECT aps.*,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY aps.account_id
+                                           ORDER BY aps.snapshot_time DESC
+                                       ) as rn
+                                FROM account_plex_snapshots aps
+                                WHERE aps.account_id IN ({",".join("?" for _ in missing_plex_accounts)})
+                                  AND aps.snapshot_time <= ?
+                            ) t
+                            WHERE rn = 1
+                            """,
+                            tuple(missing_plex_accounts + [group_time.isoformat()]),
+                        )
+                        for plex_row in fallback_plex_snaps:
+                            plex_snap = dict(plex_row)
+                            plex_snaps.append(plex_snap)
+                except Exception:
+                    logger.debug(
+                        "Failed to get fallback PLEX snapshots for group %d",
+                        group_id,
+                        exc_info=True,
+                    )
 
                 plex_total = 0.0
                 plex_count = 0
