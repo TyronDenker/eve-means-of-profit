@@ -88,7 +88,7 @@ def setup_logging(
         )
         file_handler.setLevel(numeric_level)
         file_formatter = logging.Formatter(
-            "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d: %(message)s",
+            "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         file_handler.setFormatter(file_formatter)
