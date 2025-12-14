@@ -97,7 +97,10 @@ class SDEJsonlParser:
         self.file_path: Path = Path(data_path)
 
         if not self.file_path.exists():
-            logger.warning(f"SDE base path does not exist: {self.file_path}")
+            logger.info(
+                f"SDE base path does not exist yet: {self.file_path} "
+                "(will be created during SDE download)"
+            )
 
     def load_types(self) -> Iterator[EveType]:
         """Load all EVE types from types.jsonl.

@@ -332,11 +332,16 @@ class SDEConfig(BaseSettings):
 
     @property
     def sde_dir_path(self) -> Path:
-        """Resolved SDE data directory path (read-only, uses runtime_base_path when bundled)."""
+        """Resolved SDE data directory path.
+
+        When frozen (PyInstaller), looks for data beside the executable.
+        In development, uses the project data directory.
+        """
         path = Path(self.sde_dir)
         if path.is_absolute():
             return path
-        return get_config().app.runtime_base_path / "data" / self.sde_dir
+        # Always use user_data_dir which points to the correct location in both modes
+        return get_config().app.user_data_dir / self.sde_dir
 
 
 class AppConfig(BaseSettings):
