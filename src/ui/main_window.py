@@ -414,6 +414,13 @@ class MainWindow(QMainWindow):
         self._signal_bus.info_message.connect(self._on_info)
         self._signal_bus.character_selected.connect(self._on_character_selected)
 
+        # Connect global progress signals
+        self._signal_bus.progress_start.connect(self._on_progress_start)
+        self._signal_bus.progress_update.connect(self._on_progress_update)
+        self._signal_bus.progress_complete.connect(self._on_progress_complete)
+        self._signal_bus.progress_error.connect(self._on_progress_error)
+        self._signal_bus.progress_cancel_requested.connect(self._on_progress_cancel)
+
     def _on_progress_cancel(self) -> None:
         """Handle progress widget cancel button click."""
         # Cancel background tasks
@@ -547,6 +554,40 @@ class MainWindow(QMainWindow):
         """
         self.status_bar.showMessage(f"Selected character: {character_id}", 3000)
         logger.debug("Character selected: %s", character_id)
+
+    def _on_progress_start(self, title: str, total: int) -> None:
+        """Handle global progress start signal.
+
+        Args:
+            title: Operation title
+            total: Total progress steps
+        """
+        self._progress_widget.start_operation(title, total)
+
+    def _on_progress_update(self, current: int, message: str) -> None:
+        """Handle global progress update signal.
+
+        Args:
+            current: Current progress value
+            message: Status message
+        """
+        self._progress_widget.update_progress(current, message)
+
+    def _on_progress_complete(self, message: str) -> None:
+        """Handle global progress complete signal.
+
+        Args:
+            message: Completion message
+        """
+        self._progress_widget.complete(message)
+
+    def _on_progress_error(self, message: str) -> None:
+        """Handle global progress error signal.
+
+        Args:
+            message: Error message
+        """
+        self._progress_widget.error(message)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         """Handle window close event (Qt method override).

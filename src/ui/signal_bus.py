@@ -51,6 +51,13 @@ class SignalBus(QObject):
     )  # Emitted when account structure changes (create/delete/assign)
     character_assigned = pyqtSignal(int, object)  # (character_id, account_id or None)
 
+    # Global progress signals for app-wide operations
+    progress_start = pyqtSignal(str, int)  # (title, total)
+    progress_update = pyqtSignal(int, str)  # (current, message)
+    progress_complete = pyqtSignal(str)  # (message)
+    progress_error = pyqtSignal(str)  # (message)
+    progress_cancel_requested = pyqtSignal()  # User clicked cancel
+
 
 # Global singleton instance
 _signal_bus = None

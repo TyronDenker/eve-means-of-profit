@@ -36,7 +36,7 @@ from services.networth_service import NetWorthService
 from services.wallet_service import WalletService
 from ui.signal_bus import get_signal_bus
 from ui.styles import COLORS, AppStyles
-from ui.widgets import CharacterItemWidget, ProgressWidget
+from ui.widgets import CharacterItemWidget
 from ui.widgets.account_group_widget import AccountGroupWidget, EmptyAccountWidget
 from ui.widgets.flow_layout import FlowLayout
 from utils.progress_callback import (
@@ -171,11 +171,6 @@ class CharactersTab(QWidget):
         controls_row.addStretch()
         left_layout.addLayout(controls_row)
 
-        # Progress widget for refresh operations (hidden by default)
-        self._progress_widget = ProgressWidget()
-        self._progress_widget.cancel_clicked.connect(self._on_cancel_refresh)
-        left_layout.addWidget(self._progress_widget)
-
         # Card view: Scroll area for account groups
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -293,11 +288,7 @@ class CharactersTab(QWidget):
 
     @asyncSlot()
     async def _on_update_all_characters(self) -> None:
-        """Update all endpoints for all characters using parallel updates.
-
-        Note: This method is similar to _on_refresh_all_characters but doesn't
-        create networth snapshots. Use _on_refresh_all_characters for full refresh.
-        """
+        """Update all endpoints for all characters using parallel updates."""
         # Delegate to the parallel refresh implementation
         await self._on_refresh_all_characters()
 
@@ -423,10 +414,8 @@ class CharactersTab(QWidget):
         total_endpoints = len(endpoints)
         completed = [0]  # Use list to allow mutation in nested function
 
-        # Start progress widget
-        self._progress_widget.start_operation(
-            f"Refreshing {char_name}", total=total_endpoints
-        )
+        # Start progress widget via signal bus
+        self._signal_bus.progress_start.emit(f"Refreshing {char_name}", total_endpoints)
 
         async def run_endpoint(name: str, func) -> bool | Exception:
             """Run a single endpoint (ESI client handles rate limiting)."""
@@ -441,7 +430,7 @@ class CharactersTab(QWidget):
 
                 # Update progress
                 completed[0] += 1
-                self._progress_widget.update_progress(
+                self._signal_bus.progress_update.emit(
                     completed[0],
                     f"Fetching {char_name} ({completed[0]}/{total_endpoints} endpoints)",
                 )
@@ -451,7 +440,7 @@ class CharactersTab(QWidget):
                     f"Failed to update {name} for character {character_id}"
                 )
                 completed[0] += 1
-                self._progress_widget.update_progress(
+                self._signal_bus.progress_update.emit(
                     completed[0],
                     f"Fetching {char_name} ({completed[0]}/{total_endpoints} endpoints)",
                 )
@@ -466,11 +455,11 @@ class CharactersTab(QWidget):
             # Complete progress
             failures = sum(1 for r in results if isinstance(r, Exception))
             if failures > 0:
-                self._progress_widget.complete(
+                self._signal_bus.progress_complete.emit(
                     f"{char_name}: {total_endpoints - failures}/{total_endpoints} succeeded"
                 )
             else:
-                self._progress_widget.complete(f"{char_name} refreshed!")
+                self._signal_bus.progress_complete.emit(f"{char_name} refreshed!")
 
             # Publish endpoint timers now that endpoints have been fetched
             # This allows the UI to show cache expiry indicators for this character
@@ -478,7 +467,7 @@ class CharactersTab(QWidget):
 
             return list(results)
         except Exception:
-            self._progress_widget.error(f"Failed to refresh {char_name}")
+            self._signal_bus.progress_error.emit(f"Failed to refresh {char_name}")
             raise
 
     def _get_character_name(self, character_id: int) -> str:
@@ -489,10 +478,9 @@ class CharactersTab(QWidget):
         return f"Character {character_id}"
 
     def _on_cancel_refresh(self) -> None:
-        """Handle cancel button click from progress widget."""
+        """Handle cancel button click from progress widget via signal bus."""
         if self._cancel_token:
             self._cancel_token.cancel()
-            self._progress_widget.cancel()
             self._signal_bus.status_message.emit("Cancelling refresh operation...")
 
     @asyncSlot(object)
@@ -518,9 +506,9 @@ class CharactersTab(QWidget):
                 f"Refreshing {total_chars} characters in {account_name}..."
             )
 
-            # Start overall progress
-            self._progress_widget.start_operation(
-                f"Refreshing {account_name}", total=total_chars * 6
+            # Start overall progress via signal bus
+            self._signal_bus.progress_start.emit(
+                f"Refreshing {account_name}", total_chars * 6
             )
 
             # Create snapshot group for the account
@@ -559,7 +547,6 @@ class CharactersTab(QWidget):
                 # Check for cancellation
                 if self._cancel_token and self._cancel_token.is_cancelled:
                     self._signal_bus.status_message.emit("Refresh cancelled")
-                    self._progress_widget.cancel()
                     return
 
                 char_name = self._get_character_name(character_id)
@@ -607,16 +594,16 @@ class CharactersTab(QWidget):
                         # Publish endpoint timers now that endpoints have been fetched
                         self._publish_endpoint_timers(character_id)
 
-            # Complete progress
+            # Complete progress via signal bus
             if total_failures > 0:
-                self._progress_widget.complete(
+                self._signal_bus.progress_complete.emit(
                     f"{account_name}: {total_failures} endpoint failures"
                 )
                 self._signal_bus.status_message.emit(
                     f"{account_name} refreshed with {total_failures} failures"
                 )
             else:
-                self._progress_widget.complete(f"{account_name} refreshed!")
+                self._signal_bus.progress_complete.emit(f"{account_name} refreshed!")
                 self._signal_bus.status_message.emit(
                     f"{account_name} refreshed successfully!"
                 )
@@ -634,7 +621,7 @@ class CharactersTab(QWidget):
 
         except Exception:
             logger.exception(f"Failed to refresh account {account_id}")
-            self._progress_widget.error("Failed to refresh account")
+            self._signal_bus.progress_error.emit("Failed to refresh account")
             self._signal_bus.error_occurred.emit("Failed to refresh account")
         finally:
             self._refresh_in_progress = False
@@ -664,9 +651,9 @@ class CharactersTab(QWidget):
                 f"Refreshing all {total_chars} characters..."
             )
 
-            # Start overall progress
-            self._progress_widget.start_operation(
-                f"Refreshing {total_chars} characters", total=total_chars * 6
+            # Start overall progress via signal bus
+            self._signal_bus.progress_start.emit(
+                f"Refreshing {total_chars} characters", total_chars * 6
             )
 
             # Create snapshot group for all characters
@@ -718,60 +705,92 @@ class CharactersTab(QWidget):
             total_successes = 0
             total_failures = 0
 
-            for idx, character_id in enumerate(character_ids):
-                char_name = self._get_character_name(character_id)
+            # Create semaphore for bounded concurrency (max 3 concurrent characters)
+            semaphore = asyncio.Semaphore(3)
+            completed_characters = [0]  # Track progress
 
-                # Run parallel endpoint updates for this character
-                results = await self._refresh_character_endpoints_parallel_batch(
-                    character_id, char_name, idx + 1, total_chars, completed_endpoints
-                )
+            async def refresh_single_character(idx: int, character_id: int):
+                """Refresh a single character with semaphore-based rate limiting."""
+                async with semaphore:
+                    if self._cancel_token and self._cancel_token.is_cancelled:
+                        return None, []
 
-                # Count results
-                char_successes = sum(1 for r in results if r is True)
-                char_failures = sum(1 for r in results if isinstance(r, Exception))
-                total_successes += char_successes
-                total_failures += char_failures
-                completed_endpoints += len(results)
+                    char_name = self._get_character_name(character_id)
 
-                # Save networth snapshot
-                if self._networth_service is not None:
-                    try:
-                        await self._networth_service.save_networth_snapshot(
-                            character_id, snapshot_group_id
-                        )
-                    except Exception:
-                        logger.debug(
-                            "Failed to snapshot networth after refresh for %s",
-                            character_id,
-                            exc_info=True,
-                        )
-
-                # Update character widget
-                char_widget = self._find_character_widget(character_id)
-                if char_widget:
-                    character = next(
-                        (
-                            c
-                            for c in self._last_loaded_characters
-                            if getattr(c, "character_id", 0) == character_id
-                        ),
-                        None,
+                    # Run parallel endpoint updates for this character
+                    results = await self._refresh_character_endpoints_parallel_batch(
+                        character_id,
+                        char_name,
+                        idx + 1,
+                        total_chars,
+                        completed_characters[0],
                     )
-                    if character:
-                        await self._load_networth(character, char_widget)
-                        # Publish endpoint timers now that endpoints have been fetched
-                        self._publish_endpoint_timers(character_id)
 
-            # Complete progress
+                    # Update completed endpoints count
+                    completed_characters[0] += len(results)
+
+                    # Save networth snapshot
+                    if self._networth_service is not None:
+                        try:
+                            await self._networth_service.save_networth_snapshot(
+                                character_id, snapshot_group_id
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Failed to snapshot networth after refresh for %s",
+                                character_id,
+                                exc_info=True,
+                            )
+
+                    # Update character widget
+                    char_widget = self._find_character_widget(character_id)
+                    if char_widget:
+                        character = next(
+                            (
+                                c
+                                for c in self._last_loaded_characters
+                                if getattr(c, "character_id", 0) == character_id
+                            ),
+                            None,
+                        )
+                        if character:
+                            await self._load_networth(character, char_widget)
+                            # Publish endpoint timers now that endpoints have been fetched
+                            self._publish_endpoint_timers(character_id)
+
+                    return character_id, results
+
+            # Run all characters concurrently with semaphore limiting concurrency
+            tasks = [
+                refresh_single_character(idx, char_id)
+                for idx, char_id in enumerate(character_ids)
+            ]
+            all_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Count successes and failures from all results
+            for result in all_results:
+                if isinstance(result, Exception):
+                    total_failures += 6  # All endpoints failed for this character
+                    logger.error("Character refresh failed completely: %s", result)
+                elif result is not None:
+                    char_id, endpoint_results = result
+                    char_successes = sum(1 for r in endpoint_results if r is True)
+                    char_failures = sum(
+                        1 for r in endpoint_results if isinstance(r, Exception)
+                    )
+                    total_successes += char_successes
+                    total_failures += char_failures
+
+            # Complete progress via signal bus
             if total_failures > 0:
-                self._progress_widget.complete(
+                self._signal_bus.progress_complete.emit(
                     f"Refreshed {total_chars} characters ({total_failures} endpoint failures)"
                 )
                 self._signal_bus.status_message.emit(
                     f"All characters refreshed with {total_failures} failures"
                 )
             else:
-                self._progress_widget.complete(
+                self._signal_bus.progress_complete.emit(
                     f"All {total_chars} characters refreshed!"
                 )
                 self._signal_bus.status_message.emit(
@@ -791,7 +810,7 @@ class CharactersTab(QWidget):
 
         except Exception:
             logger.exception("Failed to refresh all characters")
-            self._progress_widget.error("Failed to refresh all characters")
+            self._signal_bus.progress_error.emit("Failed to refresh all characters")
             self._signal_bus.error_occurred.emit("Failed to refresh all characters")
         finally:
             self._refresh_in_progress = False
@@ -843,9 +862,9 @@ class CharactersTab(QWidget):
                     return Exception("Cancelled")
                 await func(character_id)
 
-                # Update progress
+                # Update progress via signal bus
                 completed[0] += 1
-                self._progress_widget.update_progress(
+                self._signal_bus.progress_update.emit(
                     completed[0],
                     f"{char_name} ({char_index}/{total_chars}) - {completed[0]}/{total_all_endpoints}",
                 )
@@ -855,7 +874,7 @@ class CharactersTab(QWidget):
                     f"Failed to update {name} for character {character_id}"
                 )
                 completed[0] += 1
-                self._progress_widget.update_progress(
+                self._signal_bus.progress_update.emit(
                     completed[0],
                     f"{char_name} ({char_index}/{total_chars}) - {completed[0]}/{total_all_endpoints}",
                 )
@@ -979,6 +998,8 @@ class CharactersTab(QWidget):
         self._signal_bus.characters_loaded.connect(self._on_characters_loaded)
         # Listen for account changes to refresh UI
         self._signal_bus.account_changed.connect(self._on_account_changed)
+        # Listen for progress cancel signal from main window
+        self._signal_bus.progress_cancel_requested.connect(self._on_cancel_refresh)
 
     @pyqtSlot()
     def _on_account_changed(self) -> None:
@@ -1288,6 +1309,7 @@ class CharactersTab(QWidget):
     def _publish_endpoint_timers(self, character_id: int) -> dict[str, float | None]:
         """Compute and broadcast endpoint timers for a character."""
         timers = self._get_endpoint_timers(character_id)
+
         try:
             self._signal_bus.endpoint_timers_updated.emit(character_id, timers)
         except Exception:
@@ -1329,6 +1351,10 @@ class CharactersTab(QWidget):
             task2 = asyncio.create_task(self._load_networth(character, char_widget))
             self._background_tasks.add(task2)
             task2.add_done_callback(self._background_tasks.discard)
+
+        # Load endpoint timers from ESI cache on widget creation
+        # This ensures timers are displayed even before first manual refresh
+        self._publish_endpoint_timers(character.character_id)
 
         return char_widget
 
@@ -1379,17 +1405,30 @@ class CharactersTab(QWidget):
                 if self._networth_service is not None
                 else None
             )
-            # Set the networth data
+
+            # Preserve existing endpoint timers before updating networth
+            existing_timers = (
+                widget._endpoint_timers.copy()
+                if hasattr(widget, "_endpoint_timers")
+                else {}
+            )
+
+            # Set the networth data (this will recreate the display)
             widget.set_networth(latest)
+
+            # Restore timers if they were lost during networth update
+            if existing_timers and widget._endpoint_timers != existing_timers:
+                widget.set_endpoint_timers(existing_timers)
+
             # Store snapshot reference for list view access
             widget._networth_snapshot = latest
 
             # Ensure networth is visible after data is loaded (always show in card mode)
             widget.set_networth_visible(True)
 
-            # Don't publish endpoint timers here - they're only available after
-            # endpoints have been actually fetched (when user refreshes character).
-            # Endpoint timers will be populated after _refresh_character_endpoints_parallel_batch()
+            # Refresh endpoint timers from ESI cache to ensure they're current
+            # This will update the display with latest cache expiry times
+            self._publish_endpoint_timers(character.character_id)
 
             try:
                 widget.updateGeometry()
