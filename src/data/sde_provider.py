@@ -509,32 +509,6 @@ class SDEProvider:
         finally:
             self._background_ready.set()
 
-    def _compute_source_signature(self) -> tuple[float, int] | None:
-        """Compute a simple signature based on SDE jsonl mtimes and count.
-
-        This is the legacy signature format for backwards compatibility.
-        """
-        base = getattr(self._parser, "file_path", None)
-        if not base:
-            return None
-        base_path = Path(base)
-        if not base_path.exists():
-            return None
-
-        mtimes: list[float] = []
-        try:
-            for path in base_path.glob("*.jsonl"):
-                try:
-                    mtimes.append(path.stat().st_mtime)
-                except OSError:
-                    continue
-        except Exception:
-            return None
-
-        if not mtimes:
-            return None
-        return (max(mtimes), len(mtimes))
-
     def _check_sde_changed(self, old_metadata: SDEMetadata | None) -> bool:
         """Check if SDE source files have changed since cache was built.
 
@@ -614,14 +588,11 @@ class SDEProvider:
         if not self._types_cache:
             return
 
-        # Compute metadata (which includes computed_at timestamp)
-        signature = self._compute_source_signature()
+        # Compute metadata (includes computed_at timestamp)
         self._sde_metadata = self._compute_sde_metadata()
 
         payload = {
-            # Legacy signature for backwards compatibility
-            "signature": signature,
-            # SDE metadata - this includes computed_at for change detection
+            # SDE metadata - includes computed_at for change detection
             "sde_metadata": self._sde_metadata,
             # Caches
             "types_cache": self._types_cache,
@@ -712,13 +683,6 @@ class SDEProvider:
             if self._check_sde_changed(sde_metadata):
                 logger.info("SDE source files have changed; rebuilding all caches")
                 return False
-
-            # Fall back to legacy signature check if no metadata
-            if sde_metadata is None:
-                signature = payload.get("signature")
-                if signature and signature != self._compute_source_signature():
-                    logger.debug("SDE persist signature mismatch; rebuilding")
-                    return False
 
             # Validate integrity before loading
             if not self._validate_cache_integrity(payload):

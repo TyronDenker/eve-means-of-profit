@@ -881,15 +881,6 @@ class LocationService:
         self._failed_structures.clear()
         logger.info("Cleared %d failed structure entries", count)
 
-    def set_custom_name(self, location_id: int, custom_name: str | None) -> None:
-        """Backward-compatible wrapper to set only the custom name."""
-
-        self.set_custom_location_data(location_id, name=custom_name)
-        if custom_name:
-            logger.info("Set custom name for location %d: %s", location_id, custom_name)
-        else:
-            logger.info("Removed custom name for location %d", location_id)
-
     def get_display_name(self, location_id: int) -> str | None:
         """Get the display name for a location, preferring custom name over ESI name.
 

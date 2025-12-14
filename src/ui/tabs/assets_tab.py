@@ -824,7 +824,13 @@ class AssetsTab(QWidget):
             location_service = getattr(self._assets, "_location_service", None)
             if location_service:
                 # Always update cache with current custom name (or None)
-                location_service.set_custom_name(location_id, custom_name)
+                location_service.set_custom_location_data(location_id, name=custom_name)
+                if custom_name:
+                    logger.info(
+                        "Set custom name for location %d: %s", location_id, custom_name
+                    )
+                else:
+                    logger.info("Removed custom name for location %d", location_id)
                 logger.debug(
                     "Updated location_service cache for location_id=%s", location_id
                 )

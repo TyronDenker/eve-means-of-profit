@@ -387,16 +387,10 @@ class SettingsManager:
     # -------------------------------------------------------------------------
 
     def _load_external_custom_data(self) -> None:
-        """Load or migrate custom price and location data into memory.
+        """Load custom price and location data into memory from external files.
 
-        Migration logic:
-        - If external files exist, load them and replace in-memory maps.
-        - If they do NOT exist but legacy data is present in user_settings.json,
-          write out the new external files and clear legacy fields from the
-          primary settings file for future runs.
+        If external files exist, load them and replace in-memory maps.
         """
-        migrated = False
-
         # Load custom prices external file if present
         if self._custom_prices_path.exists():
             try:
@@ -409,31 +403,6 @@ class SettingsManager:
                     }
             except Exception as e:
                 logger.warning(f"Failed to load custom prices file: {e}")
-        elif self._settings.custom_prices:
-            # Legacy inline data – migrate
-            self._persist_custom_prices()
-            migrated = True
-
-        # If migration occurred, prune legacy fields from settings file
-        if migrated:
-            try:
-                self._save(self._settings)
-                logger.info(
-                    "Migrated legacy custom price/location data to external JSON files"
-                )
-            except Exception:
-                logger.exception("Failed to prune legacy custom data after migration")
-
-    def _persist_custom_prices(self) -> None:
-        """Persist current in-memory custom prices to external file."""
-        try:
-            self._custom_prices_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._custom_prices_path.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._settings.custom_prices, f, indent=2, ensure_ascii=False)
-            tmp.replace(self._custom_prices_path)
-        except Exception as e:
-            logger.error(f"Failed to persist custom prices: {e}")
 
     # -------------------------------------------------------------------------
     # UI Settings
@@ -597,6 +566,24 @@ class SettingsManager:
     # -------------------------------------------------------------------------
     # Custom Prices (supports buy and sell prices)
     # -------------------------------------------------------------------------
+
+    def _persist_custom_prices(self) -> None:
+        """Persist custom prices to external JSON file.
+
+        Saves the in-memory custom prices map to the external custom_prices.json
+        file to avoid large rewrites of the main settings file.
+        """
+        with self._write_lock:
+            self._custom_prices_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(self._custom_prices_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        self._settings.custom_prices, f, indent=2, ensure_ascii=False
+                    )
+                    f.flush()
+                logger.debug(f"Custom prices saved to {self._custom_prices_path}")
+            except Exception as e:
+                logger.error(f"Failed to save custom prices file: {e}")
 
     def get_custom_price(self, type_id: int) -> dict[str, float | None] | None:
         """Get custom price for an item type.
