@@ -16,6 +16,7 @@ dependencies = [
     "aiopenapi3>=0.8.1",
     "pyperclip>=1.11.0",
     "pyqtgraph>=0.13.0",
+    "pyinstaller>=6.17.0",
 ]
 
 [project.urls]
