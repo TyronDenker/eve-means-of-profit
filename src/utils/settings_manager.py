@@ -12,7 +12,7 @@ Features:
 - Automatic defaults on first run
 
 Usage:
-    from utils.settings_manager import get_settings_manager
+    from src.utils.settings_manager import get_settings_manager
 
     settings = get_settings_manager()
 

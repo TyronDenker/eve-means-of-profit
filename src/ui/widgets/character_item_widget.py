@@ -432,6 +432,7 @@ class CharacterItemWidget(QWidget):
                     "Indust.",
                     self._format_isk(getattr(snapshot, "industry_job_value", 0)),
                 ),
+                ("Skills", "—"),  # Placeholder for skills endpoint timer
             ]
             for row, (label_text, value_text) in enumerate(data_items):
                 label = QLabel(label_text)
@@ -559,6 +560,7 @@ class CharacterItemWidget(QWidget):
             "Contr.": "contracts",
             "Collat.": "contracts",
             "Indust.": "industry_jobs",
+            "Skills": "skills",
         }
         return mapping.get(label_text)
 

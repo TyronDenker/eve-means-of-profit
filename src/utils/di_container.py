@@ -10,7 +10,7 @@ Features:
 - Optional interface for backwards compatibility
 
 Usage:
-    from utils.di_container import DIContainer, get_container
+    from src.utils.di_container import DIContainer, get_container
 
     # Get the global container
     container = get_container()
@@ -274,12 +274,12 @@ def configure_container(container: DIContainer | None = None) -> DIContainer:
         container = get_container()
 
     # Register config (eager - needed by many other services)
-    from utils.config import get_config
+    from src.utils.config import get_config
 
     container.register(ServiceKeys.CONFIG, get_config())
 
     # Register metrics collector
-    from utils.metrics import get_metrics
+    from src.utils.metrics import get_metrics
 
     container.register(ServiceKeys.METRICS, get_metrics())
 
@@ -293,7 +293,7 @@ def configure_container(container: DIContainer | None = None) -> DIContainer:
 
     # Register settings manager
     def settings_factory(c: DIContainer) -> Any:
-        from utils.settings_manager import SettingsManager
+        from src.utils.settings_manager import SettingsManager
 
         return SettingsManager()
 

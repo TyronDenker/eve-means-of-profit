@@ -7,7 +7,7 @@ This module provides:
 - ProgressCallback type alias for progress handler functions
 
 Usage:
-    from utils.progress_callback import (
+    from src.utils.progress_callback import (
         CancelToken,
         ProgressCallback,
         ProgressPhase,

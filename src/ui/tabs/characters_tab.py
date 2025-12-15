@@ -44,9 +44,7 @@ from ui.widgets import CharacterItemWidget
 from ui.widgets.account_group_widget import AccountGroupWidget, EmptyAccountWidget
 from ui.widgets.flow_layout import FlowLayout
 from utils.config import get_config
-from utils.progress_callback import (
-    CancelToken,
-)
+from utils.progress_callback import CancelToken, ProgressPhase, ProgressUpdate
 from utils.settings_manager import get_settings_manager
 
 if TYPE_CHECKING:
@@ -421,9 +419,24 @@ class CharactersTab(QWidget):
 
             self._signal_bus.status_message.emit("Checking for market data updates...")
 
+            def progress_callback(update: ProgressUpdate) -> None:
+                # Surface progress to the global progress bus so the user sees feedback
+                message = update.message or "Updating market data..."
+                if update.phase == ProgressPhase.STARTING:
+                    self._signal_bus.progress_start.emit("Updating market data", 0)
+                elif update.phase in (
+                    ProgressPhase.FETCHING,
+                    ProgressPhase.PROCESSING,
+                    ProgressPhase.SAVING,
+                ):
+                    self._signal_bus.progress_update.emit(0, message)
+                elif update.phase == ProgressPhase.COMPLETE:
+                    self._signal_bus.progress_complete.emit("Market data updated")
+                self._signal_bus.status_message.emit(message)
+
             # Force check for updates (will download if ETag differs)
             csv_text = await client.fetch_aggregate_csv(
-                force=False, check_etag=True, progress_callback=None
+                force=False, check_etag=True, progress_callback=progress_callback
             )
 
             if csv_text:
@@ -465,6 +478,7 @@ class CharactersTab(QWidget):
             ("market_orders", self._update_market_orders),
             ("contracts", self._update_contracts),
             ("industry_jobs", self._update_industry_jobs),
+            ("skills", self._update_skills),
         ]
 
         total_endpoints = len(endpoints)
@@ -855,7 +869,9 @@ class CharactersTab(QWidget):
                                         exc_info=True,
                                     )
 
-                            asyncio.create_task(update_widget_networth())
+                            task = asyncio.create_task(update_widget_networth())
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
 
                             # Publish endpoint timers now that endpoints have been fetched
                             self._publish_endpoint_timers(character_id)
@@ -946,6 +962,7 @@ class CharactersTab(QWidget):
             ("market_orders", self._update_market_orders),
             ("contracts", self._update_contracts),
             ("industry_jobs", self._update_industry_jobs),
+            ("skills", self._update_skills),
         ]
 
         total_all_endpoints = total_chars * len(endpoints)
@@ -1399,6 +1416,7 @@ class CharactersTab(QWidget):
             timers["industry_jobs"] = ttl(
                 "GET", f"/characters/{character_id}/industry/jobs/", {}
             )
+            timers["skills"] = ttl("GET", f"/characters/{character_id}/skills/", None)
         except Exception:
             logger.debug(
                 "Failed to compute endpoint timers for character %s",
@@ -2097,3 +2115,24 @@ class CharactersTab(QWidget):
             character_id: Character ID
         """
         await self._industry_service.sync_jobs(character_id, include_completed=False)
+        try:
+            self._signal_bus.industry_jobs_refreshed.emit(character_id)
+        except Exception:
+            logger.debug("Failed to emit industry_jobs_refreshed", exc_info=True)
+
+    async def _update_skills(self, character_id: int) -> None:
+        """Update skills for character.
+
+        Args:
+            character_id: Character ID
+        """
+        # Skills service doesn't exist yet, but we need to trigger skill sync
+        # For now, this is a placeholder that will be expanded when skills API is integrated
+        try:
+            # TODO: Implement skills sync via character service or new skills service
+            # For now, just emit the signal to notify subscribers
+            self._signal_bus.skills_refreshed.emit(character_id)
+        except Exception:
+            logger.debug(
+                "Failed to refresh skills for character %d", character_id, exc_info=True
+            )

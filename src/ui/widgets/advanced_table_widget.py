@@ -79,6 +79,27 @@ class DictTableModel(QAbstractTableModel):
     def row_at(self, i: int) -> dict[str, Any]:
         return self._rows[i]
 
+    def update_row_values(self, row_index: int, updates: dict[str, Any]) -> None:
+        """Update specific fields in a row without resetting the model.
+
+        Emits dataChanged signal for the affected cells so the view updates
+        without losing selection, sort order, or filter state.
+
+        Args:
+            row_index: Index of the row to update
+            updates: Dictionary of {key: new_value} pairs to update
+        """
+        if row_index < 0 or row_index >= len(self._rows):
+            return
+        row = self._rows[row_index]
+        for key, value in updates.items():
+            row[key] = value
+        # Emit dataChanged for the affected columns
+        for col_idx, (col_key, _) in enumerate(self._columns):
+            if col_key in updates:
+                index = self.index(row_index, col_idx)
+                self.dataChanged.emit(index, index)
+
 
 class AdvancedTableView(QTableView):
     def __init__(self, parent: QWidget | None = None):
@@ -169,6 +190,54 @@ class AdvancedTableView(QTableView):
         self, builder: Callable[[list[dict[str, Any]]], QMenu]
     ) -> None:
         self._context_menu_builder = builder
+
+    def update_rows_by_key(self, key: str, updates: dict[Any, dict[str, Any]]) -> None:
+        """Update specific rows by key value without resetting the view.
+
+        Looks up rows by a key field value and updates their fields. This
+        preserves selection, sort order, and filter state.
+
+        Args:
+            key: Column key to match on (e.g., "job_id")
+            updates: Dictionary of {key_value: {field: new_value, ...}, ...}
+
+        Example:
+            table.update_rows_by_key("job_id", {
+                123: {"remaining_time": "01:30:00", "status": "Active"},
+                456: {"remaining_time": "00:45:30", "status": "Active"}
+            })
+        """
+        if not self._model:
+            return
+        # Find rows matching each key and update them
+        for row_idx, row in enumerate(self._model._rows):
+            row_key_val = row.get(key)
+            if row_key_val in updates:
+                self._model.update_row_values(row_idx, updates[row_key_val])
+
+    def select_rows_by_key(self, key: str, values: set[Any]) -> None:
+        """Select rows by matching a key field value.
+
+        Preserves the current selection of rows that match the given values.
+
+        Args:
+            key: Column key to match on (e.g., "job_id")
+            values: Set of values to match
+
+        Example:
+            table.select_rows_by_key("job_id", {123, 456, 789})
+        """
+        if not self._model:
+            return
+        sel_model = self.selectionModel()
+        if sel_model is None:
+            return
+        sel_model.clearSelection()
+        # Find and select matching rows
+        for row_idx, row in enumerate(self._model._rows):
+            if row.get(key) in values:
+                index = self._model.index(row_idx, 0)
+                sel_model.select(index, QTableView.SelectionFlag.SelectCurrent)
 
     def _on_context_menu(self, pos) -> None:
         if not self._context_menu_builder:

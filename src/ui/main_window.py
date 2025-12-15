@@ -26,7 +26,17 @@ from services.networth_service import NetWorthService
 from ui.dialogs import PreferencesDialog
 from ui.dialogs.auth_dialog import AuthDialog
 from ui.signal_bus import get_signal_bus
-from ui.tabs import AssetsTab, CharactersTab, NetworthTab
+from ui.tabs import (
+    AssetsTab,
+    AssetTreeTab,
+    CharactersTab,
+    IndustryJobsTab,
+    IndustrySlotsTab,
+    JournalTab,
+    NetworthTab,
+    StockpilesTab,
+    TransactionsTab,
+)
 from ui.widgets import ProgressWidget
 from utils import configure_container, get_container, global_config, setup_logging
 from utils.progress_callback import ProgressPhase, ProgressUpdate
@@ -396,6 +406,53 @@ class MainWindow(QMainWindow):
             fuzzwork_provider=self._fuzzwork_provider,
         )
         self.tab_widget.addTab(self.assets_tab, "Assets")
+
+        # Create journal tab
+        self.journal_tab = JournalTab(
+            wallet_service=self._wallet_service,
+            character_service=self._character_service,
+            sde_provider=self._sde_provider,
+        )
+        self.tab_widget.addTab(self.journal_tab, "Journal")
+
+        # Create transactions tab
+        self.transactions_tab = TransactionsTab(
+            wallet_service=self._wallet_service,
+            location_service=self._location_service,
+            sde_provider=self._sde_provider,
+        )
+        self.tab_widget.addTab(self.transactions_tab, "Transactions")
+
+        # Create industry jobs tab
+        self.industry_jobs_tab = IndustryJobsTab(
+            industry_service=self._industry_service,
+            character_service=self._character_service,
+            location_service=self._location_service,
+            sde_provider=self._sde_provider,
+        )
+        self.tab_widget.addTab(self.industry_jobs_tab, "Industry Jobs")
+
+        # Create asset tree tab
+        self.asset_tree_tab = AssetTreeTab(
+            character_service=self._character_service,
+            asset_service=self._asset_service,
+            location_service=self._location_service,
+        )
+        self.tab_widget.addTab(self.asset_tree_tab, "Asset Tree")
+
+        # Create industry slots tab
+        self.industry_slots_tab = IndustrySlotsTab(
+            character_service=self._character_service,
+            industry_service=self._industry_service,
+            esi_client=self._esi_client,
+        )
+        self.tab_widget.addTab(self.industry_slots_tab, "Industry Slots")
+
+        # Create stockpiles tab
+        self.stockpiles_tab = StockpilesTab(
+            asset_service=self._asset_service,
+        )
+        self.tab_widget.addTab(self.stockpiles_tab, "Stockpiles")
 
         # Create net worth tab (placeholder until fuzzwork is ready)
         # Will be replaced when NetWorthService is initialized

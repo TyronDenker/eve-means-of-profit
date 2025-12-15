@@ -15,6 +15,7 @@ from typing import Any
 
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
@@ -26,11 +27,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ui.styles import AppStyles
 from utils.settings_manager import get_settings_manager
 
 logger = logging.getLogger(__name__)
@@ -88,14 +89,18 @@ class FilterWidget(QWidget):
         # Toolbar
         toolbar = QHBoxLayout()
         self.add_btn = QPushButton("Add Group")
+        self.add_btn.setStyleSheet(AppStyles.BUTTON_SECONDARY)
         self.clear_btn = QPushButton("Clear All")
+        self.clear_btn.setStyleSheet(AppStyles.BUTTON_WARNING)
         self.save_preset_btn = QPushButton("Save Preset...")
+        self.save_preset_btn.setStyleSheet(AppStyles.BUTTON_PRIMARY)
         self.load_preset_btn = QPushButton("Load Preset...")
+        self.load_preset_btn.setStyleSheet(AppStyles.BUTTON_PRIMARY)
         self.export_btn = QPushButton("Export")
-        self.show_chk = QToolButton()
-        self.show_chk.setText("Show Filters")
-        self.show_chk.setCheckable(True)
+        self.export_btn.setStyleSheet(AppStyles.BUTTON_SECONDARY)
+        self.show_chk = QCheckBox("Show Filters")
         self.show_chk.setChecked(True)
+        self.show_chk.setStyleSheet(AppStyles.CHECKBOX)
 
         # Preset name label
         self.preset_label = QLabel("")
@@ -379,22 +384,19 @@ class FilterGroup(QFrame):
 
         header = QHBoxLayout()
 
-        # Enable/disable checkbox
-        self.enabled_chk = QToolButton()
-        self.enabled_chk.setText("✓")
-        self.enabled_chk.setCheckable(True)
+        # Enable/disable checkbox (real QCheckBox with styling)
+        self.enabled_chk = QCheckBox("Enabled")
         self.enabled_chk.setChecked(True)
+        self.enabled_chk.setStyleSheet(AppStyles.CHECKBOX)
         self.enabled_chk.setToolTip("Enable/disable this filter group")
-        self.enabled_chk.setFixedSize(24, 24)
         self.enabled_chk.toggled.connect(self._on_enabled_changed)
 
         self.op_combo = QComboBox()
         self.op_combo.addItems(["AND", "OR"])
         self.op_combo.setFixedHeight(24)
 
-        remove_btn = QToolButton()
-        remove_btn.setText("✖")
-        remove_btn.setFixedSize(24, 24)
+        remove_btn = QPushButton("Remove Group")
+        remove_btn.setFixedHeight(24)
         remove_btn.clicked.connect(lambda: self.remove_requested.emit())
 
         add_row_btn = QPushButton("Add Rule")
@@ -583,13 +585,11 @@ class FilterRow(QWidget):
         g.setContentsMargins(0, 0, 0, 0)
         g.setHorizontalSpacing(6)
 
-        # Enable/disable checkbox
-        self.enabled_chk = QToolButton()
-        self.enabled_chk.setText("✓")
-        self.enabled_chk.setCheckable(True)
+        # Enable/disable checkbox (real QCheckBox with styling)
+        self.enabled_chk = QCheckBox("Enabled")
         self.enabled_chk.setChecked(True)
+        self.enabled_chk.setStyleSheet(AppStyles.CHECKBOX)
         self.enabled_chk.setToolTip("Enable/disable this filter rule")
-        self.enabled_chk.setFixedSize(24, 24)
         self.enabled_chk.toggled.connect(self._on_enabled_changed)
 
         # Standard widget sizes
@@ -631,16 +631,15 @@ class FilterRow(QWidget):
         self.enum_combo.setFixedHeight(widget_height)
         self.enum_combo.setMinimumWidth(edit_width)
 
-        self.remove_btn = QToolButton()
-        self.remove_btn.setText("🗑")
-        self.remove_btn.setFixedSize(24, 24)
-        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit())
+        remove_btn = QPushButton("Remove Rule")
+        remove_btn.setFixedHeight(widget_height)
+        remove_btn.clicked.connect(lambda: self.remove_requested.emit())
 
         g.addWidget(self.enabled_chk, 0, 0)
         g.addWidget(self.col_combo, 0, 1)
         g.addWidget(self.op_combo, 0, 2)
         g.addWidget(self.text_edit, 0, 3)
-        g.addWidget(self.remove_btn, 0, 4)
+        g.addWidget(remove_btn, 0, 4)
 
         self.col_combo.currentIndexChanged.connect(self._on_column_changed)
         self.op_combo.currentIndexChanged.connect(lambda _: self.filter_changed.emit())

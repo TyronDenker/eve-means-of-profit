@@ -63,6 +63,10 @@ class SignalBus(QObject):
     progress_error = pyqtSignal(str)  # (message)
     progress_cancel_requested = pyqtSignal()  # User clicked cancel
 
+    # Domain-specific refresh signals
+    industry_jobs_refreshed = pyqtSignal(int)  # Emits character_id when jobs updated
+    skills_refreshed = pyqtSignal(int)  # Emits character_id when skills updated
+
 
 # Global singleton instance
 _signal_bus = None
