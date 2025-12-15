@@ -110,7 +110,7 @@ class PreferencesDialog(QDialog):
             "Jita typically has the highest volume and best prices."
         )
         station_help.setWordWrap(True)
-        station_help.setStyleSheet("color: #888; font-size: 10px;")
+        station_help.setStyleSheet(AppStyles.LABEL_INFO)
         source_layout.addRow("", station_help)
 
         layout.addWidget(source_group)
@@ -133,7 +133,7 @@ class PreferencesDialog(QDialog):
             "• Weighted: Blend of buy and sell prices"
         )
         price_help.setWordWrap(True)
-        price_help.setStyleSheet("color: #888; font-size: 10px;")
+        price_help.setStyleSheet(AppStyles.LABEL_INFO)
         price_layout.addRow("", price_help)
 
         # Weighted ratio (only visible when Weighted is selected)
@@ -151,7 +151,7 @@ class PreferencesDialog(QDialog):
             "For example, 0.3 means 30% buy price + 70% sell price."
         )
         weighted_help.setWordWrap(True)
-        weighted_help.setStyleSheet("color: #888; font-size: 10px;")
+        weighted_help.setStyleSheet(AppStyles.LABEL_INFO)
         self.weighted_help = weighted_help
         price_layout.addRow("", weighted_help)
 
@@ -187,7 +187,7 @@ class PreferencesDialog(QDialog):
             "Each file represents one application session."
         )
         retention_help.setWordWrap(True)
-        retention_help.setStyleSheet("color: #888; font-size: 10px;")
+        retention_help.setStyleSheet(AppStyles.LABEL_INFO)
         logging_layout.addRow("", retention_help)
 
         # Log level
@@ -205,7 +205,7 @@ class PreferencesDialog(QDialog):
             "• CRITICAL: Critical errors only"
         )
         level_help.setWordWrap(True)
-        level_help.setStyleSheet("color: #888; font-size: 10px;")
+        level_help.setStyleSheet(AppStyles.LABEL_INFO)
         logging_layout.addRow("", level_help)
 
         layout.addWidget(logging_group)

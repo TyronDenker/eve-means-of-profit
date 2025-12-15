@@ -26,6 +26,7 @@ from services.networth_service import NetWorthService
 from ui.dialogs import PreferencesDialog
 from ui.dialogs.auth_dialog import AuthDialog
 from ui.signal_bus import get_signal_bus
+from ui.styles import apply_dark_theme
 from ui.tabs import (
     AssetsTab,
     AssetTreeTab,
@@ -776,6 +777,9 @@ def main_window() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(global_config.app.name)
     app.setApplicationVersion(global_config.app.version)
+
+    # Apply dark theme globally
+    apply_dark_theme(app)
 
     # Setup async event loop
     loop = QEventLoop(app)

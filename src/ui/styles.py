@@ -21,8 +21,14 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import ClassVar
+
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import QApplication
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -79,6 +85,57 @@ class ColorPalette:
 
 # Singleton instance
 COLORS = ColorPalette()
+
+
+def apply_dark_theme(app: QApplication) -> None:
+    """Apply dark theme to entire application.
+
+    Sets up QPalette with consistent dark colors for all standard widget roles,
+    ensuring a cohesive dark theme across all dialogs, tabs, and components.
+
+    Args:
+        app: QApplication instance to apply theme to
+    """
+    palette = QPalette()
+
+    # Window backgrounds
+    palette.setColor(QPalette.ColorRole.Window, QColor(COLORS.BG_DARK))
+    palette.setColor(QPalette.ColorRole.Base, QColor(COLORS.BG_LIGHT))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(COLORS.BG_LIGHTER))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(COLORS.BG_MEDIUM))
+
+    # Text colors
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(COLORS.TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.Text, QColor(COLORS.TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(COLORS.TEXT_PRIMARY))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(COLORS.TEXT_MUTED))
+
+    # Button colors
+    palette.setColor(QPalette.ColorRole.Button, QColor(COLORS.SECONDARY))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(COLORS.TEXT_PRIMARY))
+
+    # Highlight colors
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(COLORS.PRIMARY))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(COLORS.TEXT_PRIMARY))
+
+    # Link colors
+    palette.setColor(QPalette.ColorRole.Link, QColor(COLORS.PRIMARY))
+    palette.setColor(QPalette.ColorRole.LinkVisited, QColor(COLORS.PRIMARY_HOVER))
+
+    # Disabled state colors
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.Text,
+        QColor(COLORS.TEXT_DISABLED),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.ButtonText,
+        QColor(COLORS.TEXT_DISABLED),
+    )
+
+    app.setPalette(palette)
+    logger.debug("Dark theme applied successfully")
 
 
 class AppStyles:
