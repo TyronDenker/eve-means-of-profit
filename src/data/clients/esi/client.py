@@ -28,6 +28,7 @@ from .endpoints import (
     IndustryEndpoints,
     LocationEndpoints,
     MarketEndpoints,
+    SkillsEndpoints,
     UniverseEndpoints,
     WalletEndpoints,
 )
@@ -251,6 +252,7 @@ class ESIClient:
         self.industry = IndustryEndpoints(self)
         self.location = LocationEndpoints(self)
         self.market = MarketEndpoints(self)
+        self.skills = SkillsEndpoints(self)
         self.universe = UniverseEndpoints(self)
         self.wallet = WalletEndpoints(self)
 

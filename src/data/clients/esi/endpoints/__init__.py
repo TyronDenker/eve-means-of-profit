@@ -7,6 +7,7 @@ from .corporation import CorporationEndpoints
 from .industry import IndustryEndpoints
 from .location import LocationEndpoints
 from .market import MarketEndpoints
+from .skills import SkillsEndpoints
 from .universe import UniverseEndpoints
 from .wallet import WalletEndpoints
 
@@ -18,6 +19,7 @@ __all__ = [
     "IndustryEndpoints",
     "LocationEndpoints",
     "MarketEndpoints",
+    "SkillsEndpoints",
     "UniverseEndpoints",
     "WalletEndpoints",
 ]
