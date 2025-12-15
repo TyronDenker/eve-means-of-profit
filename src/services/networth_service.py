@@ -178,9 +178,10 @@ class NetWorthService:
 
         Priority:
         1. Custom price (from settings)
-        2. Asset's market_value (if enriched)
-        3. Market price (from Fuzzwork)
-        4. Base price (from SDE)
+        2. Blueprint copy pricing (0.0 unless custom price set)
+        3. Asset's market_value (if enriched)
+        4. Market price (from Fuzzwork)
+        5. Base price (from SDE)
 
         Args:
             asset: Enriched asset object
@@ -195,9 +196,17 @@ class NetWorthService:
             if custom_prices:
                 custom_price = custom_prices.get("sell")
 
-        if custom_price is not None and custom_price > 0:
+        # Custom price takes highest priority and is honored even if 0.0 (explicit override)
+        if custom_price is not None:
             self._last_used_prices[type_id] = (custom_price, "custom")
             return custom_price
+
+        # Blueprint copies always have 0 value (unless custom price set above)
+        # is_blueprint_copy: True (copy), False (original), None (unknown - check SDE)
+        is_blueprint_copy = getattr(asset, "is_blueprint_copy", None)
+        if is_blueprint_copy is True:  # Explicit copy from ESI
+            self._last_used_prices[type_id] = (0.0, "blueprint-copy")
+            return 0.0
 
         market_value = getattr(asset, "market_value", None)
         if market_value is not None and market_value > 0:
@@ -333,6 +342,14 @@ class NetWorthService:
                 quantity = asset.quantity
                 is_blueprint_copy = asset.is_blueprint_copy
 
+                # TODO: Include blueprints in networth calculation
+                # Currently blueprints are skipped entirely. In the future, implement:
+                # - Use price priority: custom -> market_value -> market_price -> base_price
+                # - market_value for blueprints can be derived in different ways:
+                #   * Manufacturing cost (sum of component materials)
+                #   * Blueprint value (based on copy worth, time remaining, etc)
+                #   * Custom override price (user-defined valuation)
+                # - Remove the is_blueprint_copy skip to include them in totals
                 if is_blueprint_copy or quantity <= 0:
                     continue
 

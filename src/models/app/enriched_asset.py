@@ -74,7 +74,12 @@ class EnrichedAsset(BaseModel):
     @property
     def total_value(self) -> float:
         """Total estimated value for this stack."""
-        price = self.market_value or self.base_price or 0.0
+        # Use explicit None checks instead of falsy evaluation to preserve 0.0 for blueprint copies
+        price = (
+            self.market_value
+            if self.market_value is not None
+            else (self.base_price if self.base_price is not None else 0.0)
+        )
         return price * self.quantity
 
     @computed_field  # type: ignore[misc]

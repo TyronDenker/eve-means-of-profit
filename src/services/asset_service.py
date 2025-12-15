@@ -206,6 +206,22 @@ class AssetService:
                         category = self._sde.get_category_by_id(group.category_id)
                         if category:
                             enriched.category_name = category.name or ""
+                            # Append blueprint type indicator if this is a blueprint
+                            # ESI provides is_blueprint_copy: True (copy), False (original), or None (not available)
+                            # If ESI data is None but type is a blueprint per SDE, it's an original
+                            if asset.is_blueprint_copy is True:
+                                enriched.category_name = (
+                                    f"{enriched.category_name} (Copy)"
+                                )
+                            elif asset.is_blueprint_copy is False:
+                                enriched.category_name = (
+                                    f"{enriched.category_name} (Original)"
+                                )
+                            elif asset.is_blueprint_copy is None:
+                                if self._sde.is_blueprint(asset.type_id):
+                                    enriched.category_name = (
+                                        f"{enriched.category_name} (Original)"
+                                    )
         except Exception:
             logger.debug(
                 "Failed to enrich asset %s (type %s)",

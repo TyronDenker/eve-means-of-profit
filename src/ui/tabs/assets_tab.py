@@ -353,10 +353,13 @@ class AssetsTab(QWidget):
             # Now build rows with enriched assets (locations already resolved)
             for _char, enriched in character_assets:
                 for ea in enriched:
-                    # Apply prices in priority order: custom > snapshot > base
+                    # Apply prices in priority order: custom > blueprint-copy > snapshot > base
                     custom_price = self._settings.get_custom_price(ea.type_id)
                     if custom_price and custom_price.get("sell") is not None:
                         ea.market_value = custom_price["sell"]
+                    # Apply blueprint copy 0-pricing if no custom price
+                    elif ea.is_blueprint_copy is True:
+                        ea.market_value = 0.0
                     elif ea.type_id in snapshot_prices:
                         ea.market_value = snapshot_prices[ea.type_id]
                     # Otherwise market_value remains as set from repository (or None)
@@ -470,7 +473,13 @@ class AssetsTab(QWidget):
                         if fuzz_price:
                             enriched_asset.market_value = fuzz_price
 
-                    # Apply custom price from settings (overrides fuzzwork)
+                    # Apply blueprint copy 0-pricing (before custom price check)
+                    # This ensures custom prices can override the 0.0 default if set
+                    # Only apply 0 pricing if explicitly marked as copy (True), not for originals (False) or non-blueprints (None)
+                    if enriched_asset.is_blueprint_copy is True:
+                        enriched_asset.market_value = 0.0
+
+                    # Apply custom price from settings (overrides all, including blueprint 0.0)
                     custom_price = self._settings.get_custom_price(
                         enriched_asset.type_id
                     )
@@ -714,6 +723,9 @@ class AssetsTab(QWidget):
                 if custom and custom.get("sell") is not None:
                     # Apply custom unit price
                     row["market_value"] = custom["sell"]
+                # Apply blueprint copy 0-pricing if no custom price
+                elif row.get("is_blueprint_copy") is True:
+                    row["market_value"] = 0.0
                 else:
                     # Custom removed: revert to fuzzwork or base price
                     fallback = self._get_fuzzwork_price(type_id)
@@ -722,11 +734,9 @@ class AssetsTab(QWidget):
                     else:
                         base = row.get("base_price")
                         row["market_value"] = base if base is not None else None
-                # Recompute total value
+                # Recompute total value using explicit None checks to preserve 0.0 for blueprint copies
                 qty = int(row.get("quantity") or 0)
                 unit = row.get("market_value")
-                # For total value calculation, use market_value, fall back to base_price, then 0
-                # But keep market_value as None if no price available (shows empty in table)
                 if unit is not None:
                     try:
                         unit_f = float(unit)
@@ -742,13 +752,13 @@ class AssetsTab(QWidget):
                             unit_f = 0.0
                     else:
                         unit_f = 0.0
-                row["total_value"] = unit_f * qty if unit_f > 0 else None
+                # Calculate total; preserve 0.0 for blueprint copies (don't treat as missing)
+                row["total_value"] = unit_f * qty if unit_f is not None else None
         # Refresh table
         self.table.set_rows(self._rows_cache)
 
     def _on_market_preferences_changed(self) -> None:
         """Refresh all prices when market preferences change (hub/price type)."""
-        logger.info("Market preferences changed, refreshing all asset prices")
         # Schedule async refresh to load latest snapshot prices with new preferences
         task = asyncio.ensure_future(self._refresh_all_prices_async())
         self._background_tasks.add(task)
@@ -816,6 +826,9 @@ class AssetsTab(QWidget):
             custom = self._settings.get_custom_price(type_id)
             if custom and custom.get("sell") is not None:
                 row["market_value"] = custom["sell"]
+            # Apply blueprint copy 0-pricing
+            elif row.get("is_blueprint_copy") is True:
+                row["market_value"] = 0.0
             elif type_id in snapshot_prices:
                 row["market_value"] = snapshot_prices[type_id]
             else:
@@ -823,7 +836,7 @@ class AssetsTab(QWidget):
                 base = row.get("base_price")
                 row["market_value"] = base if base is not None else None
 
-            # Recalculate total value
+            # Recalculate total value using explicit None checks to preserve 0.0 for blueprint copies
             qty = int(row.get("quantity") or 0)
             unit = row.get("market_value")
             if unit is not None:
@@ -840,7 +853,8 @@ class AssetsTab(QWidget):
                         unit_f = 0.0
                 else:
                     unit_f = 0.0
-            row["total_value"] = unit_f * qty if unit_f > 0 else None
+            # Calculate total; preserve 0.0 for blueprint copies (don't treat as missing)
+            row["total_value"] = unit_f * qty if unit_f is not None else None
 
         # Refresh table display
         self.table.set_rows(self._rows_cache)

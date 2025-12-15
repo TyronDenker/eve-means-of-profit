@@ -265,22 +265,29 @@ class AssetTreeTab(QWidget):
                         refresh_locations=False,
                     )
 
-                    # Apply prices to assets (custom > snapshot > base)
+                    # Apply prices to assets (custom > blueprint-copy > snapshot > base)
                     custom_count = 0
                     snapshot_count = 0
+                    blueprint_count = 0
                     for asset in enriched_assets:
                         custom = custom_prices.get(asset.type_id)
                         if custom and custom.get("sell") is not None:
                             asset.market_value = custom["sell"]
                             custom_count += 1
+                        # Apply blueprint copy 0-pricing (can be overridden by custom above)
+                        # Only apply 0 pricing if explicitly marked as copy (True), not for originals (False) or non-blueprints (None)
+                        elif asset.is_blueprint_copy is True:
+                            asset.market_value = 0.0
+                            blueprint_count += 1
                         elif asset.type_id in snapshot_prices:
                             asset.market_value = snapshot_prices[asset.type_id]
                             snapshot_count += 1
 
                     logger.debug(
-                        "Applied prices for %s: %d custom, %d snapshot, %d total assets",
+                        "Applied prices for %s: %d custom, %d blueprint, %d snapshot, %d total assets",
                         char_name,
                         custom_count,
+                        blueprint_count,
                         snapshot_count,
                         len(enriched_assets),
                     )

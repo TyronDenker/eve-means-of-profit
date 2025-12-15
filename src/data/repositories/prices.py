@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 # Jita region ID constant
 JITA_REGION_ID = 10000002
 
+# Supported trade hub region IDs for price history persistence
+# These are the 5 major EVE Online trade hubs where we save price data
+SUPPORTED_REGION_IDS = frozenset(
+    [
+        10000002,  # Jita (The Forge)
+        10000043,  # Amarr (Domain)
+        10000032,  # Dodixie (Sinq Laison)
+        10000030,  # Rens (Heimatar)
+        10000042,  # Hek (Metropolis)
+    ]
+)
+
 
 async def save_snapshot(
     repo: Repository,
@@ -40,9 +52,13 @@ async def save_snapshot(
 ) -> int:
     """Save a new price snapshot from Fuzzwork data including custom prices.
 
+    This function implements REQ-005 and REQ-006: saves ALL items from the Fuzzwork
+    data for exactly 5 supported regions (trade hubs), filtering out all other regions.
+    This builds a comprehensive price history database for better price discovery.
+
     Args:
         repo: Repository instance
-        market_data: List of market data points to save
+        market_data: List of market data points to save (typically from FuzzworkProvider)
         notes: Optional notes about this snapshot
         custom_prices: Optional dict of custom prices at snapshot time {type_id: {buy, sell}}
         snapshot_group_id: Optional snapshot group to link this price snapshot to
@@ -69,9 +85,22 @@ async def save_snapshot(
     snapshot_id = cursor.lastrowid
 
     # Save price data for each item/region combination
+    # Only save data for supported regions
     price_records = []
+    items_saved = set()
+    regions_saved = set()
+    filtered_count = 0
+
     for item in market_data:
         for region_id, region_data in item.region_data.items():
+            # REQ-007: Skip regions not in the supported set
+            if region_id not in SUPPORTED_REGION_IDS:
+                filtered_count += 1
+                continue
+
+            items_saved.add(item.type_id)
+            regions_saved.add(region_id)
+
             # Extract buy stats
             buy_weighted_avg = None
             buy_max = None
@@ -166,11 +195,23 @@ async def save_snapshot(
         )
 
     await repo.commit()
+
+    # Log region filtering results for transparency
     logger.info(
-        "Saved price snapshot %d with %d items and %d price records",
+        "Saved price snapshot %d: %d items, %d regions, %d price records "
+        "(filtered: %d region-combinations from non-supported regions)",
         snapshot_id,
-        len(market_data),
+        len(items_saved),
+        len(regions_saved),
         len(price_records),
+        filtered_count,
+    )
+
+    logger.debug(
+        "Snapshot %d regions saved: %s (supported: %s)",
+        snapshot_id,
+        sorted(regions_saved),
+        sorted(SUPPORTED_REGION_IDS),
     )
 
     if snapshot_id is None:
