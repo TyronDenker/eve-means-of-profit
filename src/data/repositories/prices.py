@@ -36,6 +36,7 @@ async def save_snapshot(
     market_data: list[FuzzworkMarketDataPoint],
     notes: str | None = None,
     custom_prices: dict[int, dict[str, float | None]] | None = None,
+    snapshot_group_id: int | None = None,
 ) -> int:
     """Save a new price snapshot from Fuzzwork data including custom prices.
 
@@ -44,6 +45,7 @@ async def save_snapshot(
         market_data: List of market data points to save
         notes: Optional notes about this snapshot
         custom_prices: Optional dict of custom prices at snapshot time {type_id: {buy, sell}}
+        snapshot_group_id: Optional snapshot group to link this price snapshot to
 
     Returns:
         snapshot_id of the created snapshot
@@ -53,10 +55,16 @@ async def save_snapshot(
     # Create price snapshot record
     cursor = await repo.execute(
         """
-        INSERT INTO price_snapshots (snapshot_time, source, total_items, notes)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO price_snapshots (snapshot_time, source, total_items, notes, snapshot_group_id)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (snapshot_time.isoformat(), "fuzzwork", len(market_data), notes),
+        (
+            snapshot_time.isoformat(),
+            "fuzzwork",
+            len(market_data),
+            notes,
+            snapshot_group_id,
+        ),
     )
     snapshot_id = cursor.lastrowid
 
@@ -282,7 +290,7 @@ async def get_snapshots(repo: Repository, limit: int = 50) -> list[PriceSnapshot
     """
     rows = await repo.fetchall(
         """
-        SELECT snapshot_id, snapshot_time, source, total_items, notes
+        SELECT snapshot_id, snapshot_time, source, total_items, notes, snapshot_group_id
         FROM price_snapshots
         ORDER BY snapshot_time DESC
         LIMIT ?

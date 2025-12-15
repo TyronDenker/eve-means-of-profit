@@ -1,11 +1,21 @@
 """Logging configuration with file rotation support.
 
 Provides centralized logging setup with optional file output and rotation.
+
+Log Level Precedence (deterministic resolution order):
+1. CLI/explicit parameter (log_level argument to setup_logging)
+2. Environment variable (APP_LOG_LEVEL in .env)
+3. User preferences UI (logging.log_level in user_settings.json via SettingsManager)
+4. Config defaults (config.app.log_level from config.py)
+
+This ensures that explicit overrides always take precedence, followed by
+environment configuration, then user preferences, and finally hardcoded defaults.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
@@ -23,24 +33,40 @@ def setup_logging(
 ) -> None:
     """Configure application logging with file output and rotation.
 
+    Implements deterministic log level precedence:
+      1. Explicit log_level parameter (CLI/programmatic override)
+      2. APP_LOG_LEVEL environment variable (.env file)
+      3. User preferences (settings_manager.get_logging_level())
+      4. Config default (config.app.log_level)
+
     Args:
         settings_manager: Optional settings manager for logging preferences.
-        log_level: Logging level override (defaults to settings or INFO).
+        log_level: Explicit logging level override (highest priority).
         user_data_dir: Directory for log files (defaults to config user_data_dir).
     """
-    from utils.config import get_config
+    from src.utils.config import get_config
 
     config = get_config()
 
-    # Determine log level
-    if log_level is None:
-        if settings_manager:
-            log_level = settings_manager.get_logging_level()
+    # Determine log level using precedence order
+    resolved_level: str
+    if log_level is not None:
+        # Priority 1: Explicit parameter (CLI or programmatic)
+        resolved_level = log_level
+    else:
+        # Priority 2: Environment variable
+        env_level = os.environ.get("APP_LOG_LEVEL")
+        if env_level:
+            resolved_level = env_level
+        elif settings_manager:
+            # Priority 3: User preferences
+            resolved_level = settings_manager.get_logging_level()
         else:
-            log_level = config.app.log_level
+            # Priority 4: Config default
+            resolved_level = config.app.log_level
 
     # Convert string to logging level
-    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    numeric_level = getattr(logging, resolved_level.upper(), logging.INFO)
 
     # Configure root logger
     root_logger = logging.getLogger()
@@ -99,7 +125,7 @@ def setup_logging(
 
         logging.info(f"Logging to file: {log_file}")
 
-    logging.info(f"Logging configured with level: {log_level}")
+    logging.info(f"Logging configured with level: {resolved_level}")
 
 
 def _cleanup_old_logs(log_dir: Path, keep_count: int) -> None:

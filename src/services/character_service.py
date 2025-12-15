@@ -205,19 +205,6 @@ class CharacterService:
                 )
 
                 # Mark current assets as removed (don't delete - keep for historical context)
-                # First ensure the removed_at column exists
-                try:
-                    await self._repo.execute(
-                        "ALTER TABLE current_assets ADD COLUMN removed_at TIMESTAMP"
-                    )
-                    await self._repo.commit()
-                except Exception:
-                    # Column might already exist
-                    pass
-
-                # Mark all assets for this character as removed
-                from datetime import UTC, datetime
-
                 removed_time = datetime.now(UTC).isoformat()
                 await self._repo.execute(
                     "UPDATE current_assets SET removed_at = ? WHERE character_id = ? AND removed_at IS NULL",

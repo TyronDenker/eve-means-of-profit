@@ -94,6 +94,9 @@ class PriceSnapshot(BaseModel):
     source: str = Field(..., description="Data source (e.g., 'fuzzwork')")
     total_items: int = Field(..., ge=0, description="Total number of items")
     notes: str | None = Field(None, description="Optional notes about the snapshot")
+    snapshot_group_id: int | None = Field(
+        None, description="Optional snapshot group for grouped net worth history"
+    )
 
 
 class PriceHistory(BaseModel):

@@ -253,8 +253,8 @@ class MainWindow(QMainWindow):
     async def _initialize_fuzzwork(self) -> None:
         """Initialize fuzzwork data in background (non-blocking).
 
-        Downloads fuzzwork CSV if needed, then initializes the provider.
-        Updates progress widget with status.
+        Loads cached CSV if available. Does NOT trigger remote updates on startup.
+        Updates occur only on explicit user-initiated refresh requests.
         """
 
         def progress_callback(update: ProgressUpdate) -> None:
@@ -273,9 +273,10 @@ class MainWindow(QMainWindow):
                     "Loading market data...", total=100
                 )
 
-            # Fetch/refresh CSV data
+            # Fetch CSV data - do NOT check ETag or force download on startup
+            # This ensures we only use cached data and don't trigger updates
             csv_text = await self._fuzzwork_client.fetch_aggregate_csv(
-                force=False, check_etag=True, progress_callback=progress_callback
+                force=False, check_etag=False, progress_callback=progress_callback
             )
 
             if csv_text:

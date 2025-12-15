@@ -68,37 +68,16 @@ class NetWorthService:
         self._location_service = location_service
 
     async def _ensure_schema(self) -> None:
-        """Ensure new networth schema columns/tables exist."""
+        """Ensure networth snapshot groups table exists."""
         if self._schema_ready:
             return
         try:
-            cols = await self._repo.get_table_info("networth_snapshots")
-            col_names: set[str] = set()
-            for col in cols:
-                try:
-                    col_names.add(col[1])  # tuple format
-                except Exception:
-                    try:
-                        col_names.add(col["name"])
-                    except Exception:
-                        continue
-
-            if "account_id" not in col_names:
-                await self._repo.execute(
-                    "ALTER TABLE networth_snapshots ADD COLUMN account_id INTEGER"
-                )
-            if "snapshot_group_id" not in col_names:
-                await self._repo.execute(
-                    "ALTER TABLE networth_snapshots ADD COLUMN snapshot_group_id INTEGER"
-                )
-
             if not await self._repo.table_exists("networth_snapshot_groups"):
                 await self._repo.execute(CREATE_NETWORTH_SNAPSHOT_GROUPS_TABLE)
-
             await self._repo.commit()
             self._schema_ready = True
         except Exception:
-            logger.debug("Networth schema migration failed", exc_info=True)
+            logger.debug("Networth schema initialization failed", exc_info=True)
 
     def _get_market_price(self, type_id: int) -> float | None:
         """Get market price for a type from Fuzzwork data respecting user preferences.
@@ -709,6 +688,7 @@ class NetWorthService:
                             market_data,
                             notes=f"Networth snapshot for character {character_id} "
                             f"(includes {custom_count} custom prices)",
+                            snapshot_group_id=snapshot_group_id,
                         )
             except Exception:
                 logger.exception("Failed to save price snapshot", exc_info=True)

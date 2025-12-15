@@ -393,6 +393,62 @@ class CharactersTab(QWidget):
             self._cancel_token = None
             self._request_account_relayout()
 
+    async def _refresh_fuzzwork_data(self) -> bool:
+        """Explicitly refresh Fuzzwork market data.
+
+        This implements REQ-005 (Fuzzwork update gating): Updates occur only on
+        explicit user-initiated refresh requests.
+
+        Returns:
+            True if refresh was successful or data was already current, False otherwise.
+        """
+        if self._fuzzwork_provider is None:
+            logger.debug(
+                "Fuzzwork provider not initialized, skipping market data refresh"
+            )
+            return False
+
+        try:
+            from data.clients import FuzzworkClient
+            from data.parsers.fuzzwork_csv import FuzzworkCSVParser
+
+            # Get the fuzzwork client (assume it's available via main window or create one)
+            # For now, create a client instance to fetch data
+            from utils.config import get_config
+
+            config = get_config()
+            cache_dir = config.app.user_data_dir / "fuzzwork"
+
+            client = FuzzworkClient(cache_dir=cache_dir)
+
+            self._signal_bus.status_message.emit("Checking for market data updates...")
+
+            # Force check for updates (will download if ETag differs)
+            csv_text = await client.fetch_aggregate_csv(
+                force=False, check_etag=True, progress_callback=None
+            )
+
+            if csv_text:
+                # Reload the provider with fresh data
+                parser = FuzzworkCSVParser(csv_text)
+                from data import FuzzworkProvider
+
+                self._fuzzwork_provider = FuzzworkProvider(parser)
+
+                # Also update networth service's provider reference if available
+                if self._networth_service:
+                    self._networth_service._fuzzwork = self._fuzzwork_provider
+
+                logger.info("Fuzzwork market data refreshed successfully")
+                self._signal_bus.status_message.emit("Market data updated")
+                return True
+            logger.debug("No Fuzzwork data available")
+            return False
+
+        except Exception:
+            logger.debug("Failed to refresh Fuzzwork data", exc_info=True)
+            return False
+
     async def _refresh_character_endpoints_parallel(
         self, character_id: int, char_name: str
     ) -> list[bool | BaseException]:
@@ -494,6 +550,9 @@ class CharactersTab(QWidget):
         self._refresh_in_progress = True
 
         try:
+            # Step 1: Refresh Fuzzwork market data (explicit user request)
+            await self._refresh_fuzzwork_data()
+
             # Get all character IDs for this account
             character_ids = []
             for card in self._get_account_character_cards(account_id):
@@ -649,6 +708,9 @@ class CharactersTab(QWidget):
         self._refresh_in_progress = True
 
         try:
+            # Step 1: Refresh Fuzzwork market data (explicit user request)
+            await self._refresh_fuzzwork_data()
+
             character_ids = [
                 getattr(ch, "character_id", 0)
                 for ch in self._last_loaded_characters
@@ -1989,42 +2051,23 @@ class CharactersTab(QWidget):
     async def _update_assets(self, character_id: int) -> None:
         """Update assets for character.
 
+        Ensures assets are fully persisted and locations are prepared for resolution.
+
         Args:
             character_id: Character ID
         """
-        # Fetch data from ESI
-        result = await self._esi_client.assets.get_assets(
-            character_id, use_cache=True, bypass_cache=False
-        )
-        # Normalize possible (list, headers) response
-        if isinstance(result, tuple):
-            assets_list, _headers = result
-        else:
-            assets_list = result
+        # Use the asset service's sync method which handles persistence properly
         try:
-            # Persist to current_assets (do not snapshot here)
-            from data.repositories import (
-                assets as assets_repo,  # local import to avoid cycles
+            count = await self._asset_service.sync_assets(
+                character_id, use_cache=True, bypass_cache=False
             )
-
-            # Access repository via asset service
-            repo = getattr(self._asset_service, "_repo", None)
-            if repo is not None:
-                await assets_repo.update_current_assets(repo, character_id, assets_list)
-                await repo.commit()  # Ensure changes are persisted
-                logger.info(
-                    "Updated current_assets for character %d with %d assets",
-                    character_id,
-                    len(assets_list),
-                )
-            else:
-                logger.warning(
-                    "Repository not available on asset service; skipping DB update for assets"
-                )
+            logger.info(
+                "Synced %d assets for character %d",
+                count,
+                character_id,
+            )
         except Exception:
-            logger.exception(
-                "Failed to update current_assets for character %d", character_id
-            )
+            logger.exception("Failed to sync assets for character %d", character_id)
 
     async def _update_wallet_journal(self, character_id: int) -> None:
         """Update wallet journal for character.

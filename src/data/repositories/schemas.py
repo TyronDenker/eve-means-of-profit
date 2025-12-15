@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS current_assets (
     is_singleton INTEGER NOT NULL,
     is_blueprint_copy INTEGER,
     last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    removed_at TIMESTAMP,
     PRIMARY KEY (character_id, item_id)
 );
 """
@@ -142,7 +143,9 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     source TEXT NOT NULL DEFAULT 'fuzzwork',
     total_items INTEGER NOT NULL,
     notes TEXT,
-    UNIQUE(snapshot_time, source)
+    snapshot_group_id INTEGER,
+    UNIQUE(snapshot_time, source),
+    FOREIGN KEY (snapshot_group_id) REFERENCES networth_snapshot_groups(snapshot_group_id) ON DELETE SET NULL
 );
 """
 
