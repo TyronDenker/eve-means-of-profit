@@ -13,8 +13,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -22,14 +20,20 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+from utils.settings_manager import get_settings_manager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -152,8 +156,6 @@ class FilterWidget(QWidget):
 
     def _on_save_preset(self) -> None:
         """Save current filter configuration as a named preset."""
-        from PyQt6.QtWidgets import QInputDialog
-
         name, ok = QInputDialog.getText(
             self,
             "Save Preset",
@@ -168,12 +170,8 @@ class FilterWidget(QWidget):
 
     def _on_load_preset(self) -> None:
         """Load a saved filter preset."""
-        from PyQt6.QtWidgets import QInputDialog
-
         presets = self._get_preset_names()
         if not presets:
-            from PyQt6.QtWidgets import QMessageBox
-
             QMessageBox.information(self, "No Presets", "No saved presets found.")
             return
         name, ok = QInputDialog.getItem(
@@ -190,8 +188,6 @@ class FilterWidget(QWidget):
         """Save preset to UI settings as JSON string."""
         if not self._settings_key:
             return
-        from utils.settings_manager import get_settings_manager
-
         sm = get_settings_manager()
         ui = sm.get_ui_settings(self._settings_key)
         try:
@@ -206,8 +202,6 @@ class FilterWidget(QWidget):
         """Load preset from UI settings."""
         if not self._settings_key:
             return None
-        from utils.settings_manager import get_settings_manager
-
         sm = get_settings_manager()
         ui = sm.get_ui_settings(self._settings_key)
         try:
@@ -221,8 +215,6 @@ class FilterWidget(QWidget):
         """Get list of saved preset names from UI settings."""
         if not self._settings_key:
             return []
-        from utils.settings_manager import get_settings_manager
-
         sm = get_settings_manager()
         ui = sm.get_ui_settings(self._settings_key)
         try:
@@ -236,8 +228,6 @@ class FilterWidget(QWidget):
         """Load last filter state from UI settings if configured."""
         if not self._settings_key:
             return
-        from utils.settings_manager import get_settings_manager
-
         sm = get_settings_manager()
         ui = sm.get_ui_settings(self._settings_key)
         if ui.active_filter:
@@ -251,8 +241,6 @@ class FilterWidget(QWidget):
         """Persist current filter state to UI settings if configured."""
         if not self._settings_key:
             return
-        from utils.settings_manager import get_settings_manager
-
         sm = get_settings_manager()
         spec = self.get_spec()
         sm.update_ui_settings(self._settings_key, active_filter=json.dumps(spec))
@@ -605,43 +593,43 @@ class FilterRow(QWidget):
         self.enabled_chk.toggled.connect(self._on_enabled_changed)
 
         # Standard widget sizes
-        WIDGET_HEIGHT = 24
-        COMBO_WIDTH = 150
-        EDIT_WIDTH = 200
+        widget_height = 24
+        combo_width = 150
+        edit_width = 200
 
         self.col_combo = QComboBox()
         self.col_combo.addItems([c.title for c in self._columns])
-        self.col_combo.setFixedHeight(WIDGET_HEIGHT)
-        self.col_combo.setMinimumWidth(COMBO_WIDTH)
+        self.col_combo.setFixedHeight(widget_height)
+        self.col_combo.setMinimumWidth(combo_width)
 
         self.op_combo = QComboBox()
-        self.op_combo.setFixedHeight(WIDGET_HEIGHT)
+        self.op_combo.setFixedHeight(widget_height)
         self.op_combo.setMinimumWidth(100)
 
         # Editors; we'll swap based on type
         self.text_edit = QLineEdit()
-        self.text_edit.setFixedHeight(WIDGET_HEIGHT)
-        self.text_edit.setMinimumWidth(EDIT_WIDTH)
+        self.text_edit.setFixedHeight(widget_height)
+        self.text_edit.setMinimumWidth(edit_width)
 
         self.int_edit = QSpinBox()
         self.int_edit.setRange(-2_147_483_648, 2_147_483_647)
-        self.int_edit.setFixedHeight(WIDGET_HEIGHT)
-        self.int_edit.setMinimumWidth(EDIT_WIDTH)
+        self.int_edit.setFixedHeight(widget_height)
+        self.int_edit.setMinimumWidth(edit_width)
 
         self.float_edit = QDoubleSpinBox()
         self.float_edit.setRange(-1e12, 1e12)
         self.float_edit.setDecimals(4)
-        self.float_edit.setFixedHeight(WIDGET_HEIGHT)
-        self.float_edit.setMinimumWidth(EDIT_WIDTH)
+        self.float_edit.setFixedHeight(widget_height)
+        self.float_edit.setMinimumWidth(edit_width)
 
         self.bool_combo = QComboBox()
         self.bool_combo.addItems(["True", "False"])
-        self.bool_combo.setFixedHeight(WIDGET_HEIGHT)
-        self.bool_combo.setMinimumWidth(EDIT_WIDTH)
+        self.bool_combo.setFixedHeight(widget_height)
+        self.bool_combo.setMinimumWidth(edit_width)
 
         self.enum_combo = QComboBox()
-        self.enum_combo.setFixedHeight(WIDGET_HEIGHT)
-        self.enum_combo.setMinimumWidth(EDIT_WIDTH)
+        self.enum_combo.setFixedHeight(widget_height)
+        self.enum_combo.setMinimumWidth(edit_width)
 
         self.remove_btn = QToolButton()
         self.remove_btn.setText("🗑")

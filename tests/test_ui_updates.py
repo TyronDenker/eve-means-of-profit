@@ -2,6 +2,7 @@
 
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Ensure src is on path
@@ -33,7 +34,7 @@ class MockCheckBox:
     def __init__(self, checked: bool = True):
         self._checked = checked
 
-    def isChecked(self) -> bool:
+    def is_checked(self) -> bool:
         return self._checked
 
 
@@ -47,7 +48,7 @@ def test_networth_tab_returns_empty_list_when_no_checkboxes_selected():
     }
 
     # Logic from _get_all_character_ids
-    selected = [cid for cid, cb in character_checkboxes.items() if cb.isChecked()]
+    selected = [cid for cid, cb in character_checkboxes.items() if cb.is_checked()]
 
     if character_checkboxes:
         # Checkboxes exist - return only selected (empty list shows empty graph)
@@ -145,7 +146,6 @@ def test_timers_visibility_flag():
 
 def test_date_selector_defaults_to_earliest_snapshot():
     """Test that date selector defaults to earliest snapshot date."""
-    from datetime import UTC, datetime
 
     class MockSnapshot:
         def __init__(self, time: datetime):
@@ -316,12 +316,11 @@ class TestNetworthVerticalPanel:
     def test_splitter_orientation(self):
         """Test that splitter can be configured for vertical split."""
         # Simulate Qt.Orientation values
-        HORIZONTAL = 1
-        VERTICAL = 2
+        horizontal = 1
 
         # Vertical panel means horizontal splitter (left/right split)
-        splitter_orientation = HORIZONTAL
-        assert splitter_orientation == HORIZONTAL
+        splitter_orientation = horizontal
+        assert splitter_orientation == horizontal
 
     def test_panel_minimum_sizes(self):
         """Test panel minimum size constraints."""
@@ -369,7 +368,6 @@ class TestAssetsCharacterFilter:
 
     def test_character_filter_selection(self):
         """Test character filter with specific selection."""
-        all_character_ids = {1, 2, 3, 4}
         selected_character_ids = {1, 3}
 
         # Filter should only include selected

@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 import pyqtgraph as pg  # type: ignore
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
+    QCalendarWidget,
     QCheckBox,
     QDateEdit,
     QFrame,
@@ -34,9 +35,11 @@ from qasync import asyncSlot
 from models.app import AssetLocationOption, NetWorthSnapshot
 from services.character_service import CharacterService
 from services.networth_service import NetWorthService
+from ui.dialogs.edit_snapshot_dialog import EditSnapshotDialog
 from ui.dialogs.select_asset_locations_dialog import SelectAssetLocationsDialog
 from ui.signal_bus import get_signal_bus
 from ui.styles import COLORS, AppStyles, GraphStyles
+from utils.settings_manager import get_settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +67,7 @@ def format_isk_short(value: float, signed: bool = False) -> str:
 class ISKAxisItem(pg.AxisItem):
     """Axis implementation that formats ticks using ISK abbreviations."""
 
-    def tickStrings(self, values, scale, spacing):
+    def tick_strings(self, values, scale, spacing):
         return [format_isk_short(value) for value in values]
 
 
@@ -437,7 +440,9 @@ class NetworthTab(QWidget):
 
     def _schedule_plot_refresh(self) -> None:
         try:
-            asyncio.create_task(self._plot())
+            task = asyncio.create_task(self._plot())
+            self._background_tasks.add(task)
+            task.add_done_callback(lambda t: self._background_tasks.discard(t))
         except Exception:
             pass
 
@@ -762,8 +767,8 @@ class NetworthTab(QWidget):
             # Load both snapshot groups for graph and individual snapshots for editing
             (
                 groups,
-                char_snaps_by_group,
-                plex_snaps_by_group,
+                _char_snaps_by_group,
+                _plex_snaps_by_group,
             ) = await self._load_snapshot_groups_and_data(start, query_end)
             await self._load_all_snapshots(
                 start=start, end=query_end
@@ -894,7 +899,7 @@ class NetworthTab(QWidget):
                             ) t
                             WHERE rn = 1
                             """,
-                            tuple(chars_with_missing_snaps + [group_time.isoformat()]),
+                            (*chars_with_missing_snaps, group_time.isoformat()),
                         )
                         for snap_row in fallback_snaps:
                             fallback_snap = NetWorthSnapshot(**dict(snap_row))
@@ -941,7 +946,7 @@ class NetworthTab(QWidget):
                     plex_snaps = []
 
                 # For accounts missing PLEX snapshots in this group, get their latest up to group_time
-                plex_snaps_by_account = {p.get("account_id"): p for p in plex_snaps}
+                _plex_snaps_by_account = {p.get("account_id"): p for p in plex_snaps}
                 try:
                     # Get ALL account IDs that have any PLEX snapshots (not just current group)
                     all_plex_accounts = await self._networth._repo.fetchall(
@@ -955,7 +960,7 @@ class NetworthTab(QWidget):
                     ]
 
                     # Find accounts with PLEX in current group
-                    plex_group_accounts = set(p.get("account_id") for p in plex_snaps)
+                    plex_group_accounts = {p.get("account_id") for p in plex_snaps}
 
                     # Get fallback PLEX snapshots for accounts missing them
                     missing_plex_accounts = [
@@ -981,7 +986,7 @@ class NetworthTab(QWidget):
                             ) t
                             WHERE rn = 1
                             """,
-                            tuple(missing_plex_accounts + [group_time.isoformat()]),
+                            (*missing_plex_accounts, group_time.isoformat()),
                         )
                         for plex_row in fallback_plex_snaps:
                             plex_snap = dict(plex_row)
@@ -1053,7 +1058,7 @@ class NetworthTab(QWidget):
             plotted_labels: list[str] = []
 
             # Plot asset-based categories
-            for field, label in self.CATEGORY_FIELDS:
+            for _field, label in self.CATEGORY_FIELDS:
                 if not self._category_visibility.get(label, True):
                     continue
 
@@ -1186,7 +1191,10 @@ class NetworthTab(QWidget):
             return min(
                 snaps,
                 key=lambda s: abs(
-                    getattr(s, "snapshot_time", datetime.min).timestamp() - ts_float
+                    getattr(
+                        s, "snapshot_time", datetime.min.replace(tzinfo=UTC)
+                    ).timestamp()
+                    - ts_float
                 ),
             )
 
@@ -1254,8 +1262,6 @@ class NetworthTab(QWidget):
 
             async def _show_dialog():
                 try:
-                    from ui.dialogs.edit_snapshot_dialog import EditSnapshotDialog
-
                     # Fetch authenticated characters for the dropdown
                     try:
                         characters = (
@@ -1305,8 +1311,6 @@ class NetworthTab(QWidget):
                     accounts = {}
                     plex_snapshots_by_account = {}
                     try:
-                        from utils.settings_manager import get_settings_manager
-
                         settings = get_settings_manager()
                         all_accounts = settings.get_accounts()
                         for account_id, account_data in all_accounts.items():
@@ -1615,8 +1619,6 @@ class NetworthTab(QWidget):
 
             # Set vertical header format (don't show week numbers which can cause click issues)
             try:
-                from PyQt6.QtWidgets import QCalendarWidget
-
                 calendar.setVerticalHeaderFormat(
                     QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
                 )

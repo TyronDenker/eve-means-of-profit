@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import time
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QCloseEvent
@@ -27,8 +28,9 @@ from ui.dialogs.auth_dialog import AuthDialog
 from ui.signal_bus import get_signal_bus
 from ui.tabs import AssetsTab, CharactersTab, NetworthTab
 from ui.widgets import ProgressWidget
-from utils import global_config
+from utils import configure_container, get_container, global_config, setup_logging
 from utils.progress_callback import ProgressPhase, ProgressUpdate
+from utils.settings_manager import get_settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +43,6 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Initialize DI container and configure services
-        from utils import configure_container, get_container
-
         configure_container()
         container = get_container()
 
@@ -96,8 +96,6 @@ class MainWindow(QMainWindow):
         Phase 2: Start background updates (non-blocking)
         Phase 3: Data completes incrementally as background tasks finish
         """
-        import time
-
         start_time = time.time()
         logger.info("PHASE 0 START - Initializing SDE")
 
@@ -300,12 +298,12 @@ class MainWindow(QMainWindow):
 
                 # Update the CharactersTab with the networth_service and fuzzwork_provider
                 if hasattr(self, "characters_tab") and self.characters_tab:
-                    self.characters_tab._networth_service = self._networth_service
-                    self.characters_tab._fuzzwork_provider = self._fuzzwork_provider
+                    self.characters_tab._networth_service = self._networth_service  # noqa: SLF001
+                    self.characters_tab._fuzzwork_provider = self._fuzzwork_provider  # noqa: SLF001
 
                 # Update the AssetsTab with the fuzzwork_provider
                 if hasattr(self, "assets_tab") and self.assets_tab:
-                    self.assets_tab._fuzzwork = self._fuzzwork_provider
+                    self.assets_tab._fuzzwork = self._fuzzwork_provider  # noqa: SLF001
                     try:
                         # Reprice assets now that market data is available
                         if hasattr(self.assets_tab, "on_fuzzwork_ready"):
@@ -383,7 +381,7 @@ class MainWindow(QMainWindow):
         # Use tab name from config or settings manager if available
         tab_name = (
             self._settings.get_ui_settings("characters_tab").column_order[0]
-            if "characters_tab" in self._settings._settings.ui
+            if "characters_tab" in self._settings._settings.ui  # noqa: SLF001
             and self._settings.get_ui_settings("characters_tab").column_order
             else "Characters"
         )
@@ -693,7 +691,9 @@ class MainWindow(QMainWindow):
         # Run cleanup in the event loop
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.ensure_future(cleanup())
+            task = asyncio.ensure_future(cleanup())
+            self._background_tasks.add(task)
+            task.add_done_callback(lambda t: self._background_tasks.discard(t))
         else:
             loop.run_until_complete(cleanup())
 
@@ -706,10 +706,6 @@ def main_window() -> int:
     Returns:
         Exit code
     """
-    # Import here to avoid circular dependencies
-    from utils import setup_logging
-    from utils.settings_manager import get_settings_manager
-
     # Setup logging with file rotation
     settings_manager = get_settings_manager()
     setup_logging(settings_manager=settings_manager)

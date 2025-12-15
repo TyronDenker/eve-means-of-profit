@@ -206,7 +206,7 @@ async def get_active_characters_at_time(
             )
             {char_filter}
         """,
-        tuple([target_iso, target_iso] + params),
+        (target_iso, target_iso, *params),
     )
 
     return [int(row["character_id"]) for row in rows]

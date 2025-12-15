@@ -22,8 +22,12 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.utils.config import get_config
+
 if TYPE_CHECKING:
-    from utils.settings_manager import SettingsManager
+    from src.utils.settings_manager import SettingsManager
+
+logger = logging.getLogger(__name__)
 
 
 def setup_logging(
@@ -44,8 +48,6 @@ def setup_logging(
         log_level: Explicit logging level override (highest priority).
         user_data_dir: Directory for log files (defaults to config user_data_dir).
     """
-    from src.utils.config import get_config
-
     config = get_config()
 
     # Determine log level using precedence order
@@ -123,9 +125,9 @@ def setup_logging(
         # Clean up old log files
         _cleanup_old_logs(log_dir, retention_count)
 
-        logging.info(f"Logging to file: {log_file}")
+        logger.info(f"Logging to file: {log_file}")
 
-    logging.info(f"Logging configured with level: {resolved_level}")
+    logger.info(f"Logging configured with level: {resolved_level}")
 
 
 def _cleanup_old_logs(log_dir: Path, keep_count: int) -> None:
@@ -146,8 +148,8 @@ def _cleanup_old_logs(log_dir: Path, keep_count: int) -> None:
         for log_file in log_files[keep_count:]:
             try:
                 log_file.unlink()
-                logging.debug(f"Deleted old log file: {log_file}")
+                logger.debug(f"Deleted old log file: {log_file}")
             except Exception as e:
-                logging.warning(f"Failed to delete old log file {log_file}: {e}")
+                logger.warning(f"Failed to delete old log file {log_file}: {e}")
     except Exception as e:
-        logging.warning(f"Failed to cleanup old log files: {e}")
+        logger.warning(f"Failed to cleanup old log files: {e}")

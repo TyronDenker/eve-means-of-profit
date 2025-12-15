@@ -25,7 +25,9 @@ from PyQt6.QtWidgets import (
 )
 from qasync import asyncSlot
 
-from data.clients import ESIClient
+from data import FuzzworkProvider
+from data.clients import ESIClient, FuzzworkClient
+from data.parsers.fuzzwork_csv import FuzzworkCSVParser
 from models.app.character_info import CharacterInfo
 from services.asset_service import AssetService
 from services.character_service import CharacterService
@@ -34,18 +36,21 @@ from services.industry_service import IndustryService
 from services.market_service import MarketService
 from services.networth_service import NetWorthService
 from services.wallet_service import WalletService
+from ui.dialogs.account_manager_dialog import AccountManagerDialog
+from ui.dialogs.auth_dialog import AuthDialog
 from ui.signal_bus import get_signal_bus
 from ui.styles import COLORS, AppStyles
 from ui.widgets import CharacterItemWidget
 from ui.widgets.account_group_widget import AccountGroupWidget, EmptyAccountWidget
 from ui.widgets.flow_layout import FlowLayout
+from utils.config import get_config
 from utils.progress_callback import (
     CancelToken,
 )
 from utils.settings_manager import get_settings_manager
 
 if TYPE_CHECKING:
-    from data import FuzzworkProvider
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -409,13 +414,6 @@ class CharactersTab(QWidget):
             return False
 
         try:
-            from data.clients import FuzzworkClient
-            from data.parsers.fuzzwork_csv import FuzzworkCSVParser
-
-            # Get the fuzzwork client (assume it's available via main window or create one)
-            # For now, create a client instance to fetch data
-            from utils.config import get_config
-
             config = get_config()
             cache_dir = config.app.user_data_dir / "fuzzwork"
 
@@ -431,13 +429,12 @@ class CharactersTab(QWidget):
             if csv_text:
                 # Reload the provider with fresh data
                 parser = FuzzworkCSVParser(csv_text)
-                from data import FuzzworkProvider
 
                 self._fuzzwork_provider = FuzzworkProvider(parser)
 
                 # Also update networth service's provider reference if available
                 if self._networth_service:
-                    self._networth_service._fuzzwork = self._fuzzwork_provider
+                    self._networth_service._fuzzwork = self._fuzzwork_provider  # noqa: SLF001
 
                 logger.info("Fuzzwork market data refreshed successfully")
                 self._signal_bus.status_message.emit("Market data updated")
@@ -776,7 +773,6 @@ class CharactersTab(QWidget):
                         exc_info=True,
                     )
 
-            completed_endpoints = 0
             total_successes = 0
             total_failures = 0
 
@@ -837,20 +833,20 @@ class CharactersTab(QWidget):
                                     )
                                     if char_widget and not char_widget.isHidden():
                                         existing_timers = (
-                                            char_widget._endpoint_timers.copy()
+                                            char_widget._endpoint_timers.copy()  # noqa: SLF001
                                             if hasattr(char_widget, "_endpoint_timers")
                                             else {}
                                         )
                                         char_widget.set_networth(latest)
                                         if (
                                             existing_timers
-                                            and char_widget._endpoint_timers
+                                            and char_widget._endpoint_timers  # noqa: SLF001
                                             != existing_timers
                                         ):
                                             char_widget.set_endpoint_timers(
                                                 existing_timers
                                             )
-                                        char_widget._networth_snapshot = latest
+                                        char_widget._networth_snapshot = latest  # noqa: SLF001
                                         char_widget.set_networth_visible(True)
                                 except Exception:
                                     logger.debug(
@@ -879,7 +875,7 @@ class CharactersTab(QWidget):
                     total_failures += 6  # All endpoints failed for this character
                     logger.error("Character refresh failed completely: %s", result)
                 elif result is not None:
-                    char_id, endpoint_results = result
+                    _, endpoint_results = result
                     char_successes = sum(1 for r in endpoint_results if r is True)
                     char_failures = sum(
                         1 for r in endpoint_results if isinstance(r, Exception)
@@ -1526,7 +1522,7 @@ class CharactersTab(QWidget):
 
             # Preserve existing endpoint timers before updating networth
             existing_timers = (
-                widget._endpoint_timers.copy()
+                widget._endpoint_timers.copy()  # noqa: SLF001
                 if hasattr(widget, "_endpoint_timers")
                 else {}
             )
@@ -1535,11 +1531,11 @@ class CharactersTab(QWidget):
             widget.set_networth(latest)
 
             # Restore timers if they were lost during networth update
-            if existing_timers and widget._endpoint_timers != existing_timers:
+            if existing_timers and widget._endpoint_timers != existing_timers:  # noqa: SLF001
                 widget.set_endpoint_timers(existing_timers)
 
             # Store snapshot reference for list view access
-            widget._networth_snapshot = latest
+            widget._networth_snapshot = latest  # noqa: SLF001
 
             # Ensure networth is visible after data is loaded (always show in card mode)
             widget.set_networth_visible(True)
@@ -1798,8 +1794,6 @@ class CharactersTab(QWidget):
         )
         menu.addAction(reauth_action)
         # Manage accounts / PLEX vault
-        from ui.dialogs.account_manager_dialog import AccountManagerDialog
-
         manage_accounts_action = QAction("Manage Accounts / PLEX Vault", self)
 
         def _open_accounts_dialog():
@@ -1822,8 +1816,6 @@ class CharactersTab(QWidget):
 
     def _on_new_account_clicked(self) -> None:
         """Open the account manager dialog to create a new account."""
-        from ui.dialogs.account_manager_dialog import AccountManagerDialog
-
         # Build id->name mapping from loaded characters
         names: dict[int, str] = {}
         try:
@@ -1945,8 +1937,7 @@ class CharactersTab(QWidget):
                 task.add_done_callback(self._background_tasks.discard)
                 return
 
-            # Find the character widget for this character_id
-            char_widget = None
+            # Find and process the character for this character_id
             for ch in self._last_loaded_characters:
                 if getattr(ch, "character_id", 0) == character_id:
                     # Create a new widget for the target group
@@ -1987,8 +1978,6 @@ class CharactersTab(QWidget):
     @asyncSlot()
     def _on_add_character_clicked(self) -> None:
         """Handle Add Character button click."""
-        from ui.dialogs.auth_dialog import AuthDialog
-
         dialog = AuthDialog(self._character_service, self)
         dialog.exec()
 

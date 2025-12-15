@@ -6,19 +6,19 @@ Provides structured exception classes for different error scenarios.
 from __future__ import annotations
 
 
-class EMoPException(Exception):
+class EMoPError(Exception):
     """Base exception for all EVE Means of Profit errors."""
 
     pass
 
 
-class ConfigurationError(EMoPException):
+class ConfigurationError(EMoPError):
     """Exception raised for configuration-related errors."""
 
     pass
 
 
-class DataProviderError(EMoPException):
+class DataProviderError(EMoPError):
     """Base exception for data provider errors."""
 
     pass
@@ -60,13 +60,13 @@ class ESIServerError(ESIError):
     pass
 
 
-class ServiceError(EMoPException):
+class ServiceError(EMoPError):
     """Base exception for service layer errors."""
 
     pass
 
 
-class RepositoryError(EMoPException):
+class RepositoryError(EMoPError):
     """Base exception for repository/database errors."""
 
     pass

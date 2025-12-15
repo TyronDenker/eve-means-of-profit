@@ -189,7 +189,7 @@ class SDEClient:
             else:
                 logger.debug(f"SDE is up to date: {current_build}")
 
-            return needs_update, latest_build
+            return needs_update, latest_build if needs_update else None
         except Exception as e:
             logger.error(f"Failed to check for SDE updates: {e}")
             # If we can't check, but SDE files are missing, trigger a download

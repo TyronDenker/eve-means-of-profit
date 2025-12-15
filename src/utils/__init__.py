@@ -12,7 +12,7 @@ from .di_container import (
 from .exceptions import (
     ConfigurationError,
     DataProviderError,
-    EMoPException,
+    EMoPError,
     ESIError,
     ESIRateLimitError,
     ESIServerError,
@@ -45,7 +45,7 @@ __all__ = [
     "DIContainer",
     "DIContainerError",
     "DataProviderError",
-    "EMoPException",
+    "EMoPError",
     "ESIError",
     "ESIRateLimitError",
     "ESIServerError",
