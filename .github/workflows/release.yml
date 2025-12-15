@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -82,18 +85,11 @@ jobs:
             ### Installation
 
             1. Download `EVE Means of Profit.exe` from this release
-            2. Create a folder called `data` in the same directory as the executable
-            3. Run the executable - on first launch, it will automatically download required SDE data (~100 MB)
-            4. Authenticate with your EVE Online account
+            2. Run the executable
 
             ### Changes in this release
 
             ${{ steps.changelog.outputs.changelog }}
-
-            ### Requirements
-
-            - Windows 7 or later
-            - Active internet connection (for ESI API and data downloads on first run)
 
             ### Support
 
