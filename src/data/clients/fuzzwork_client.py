@@ -312,7 +312,7 @@ class FuzzworkClient:
                     phase=ProgressPhase.FETCHING,
                     current=0,
                     total=0,
-                    message="Downloading compressed CSV...",
+                    message="Updating fuzzwork market data...",
                 )
             )
 
