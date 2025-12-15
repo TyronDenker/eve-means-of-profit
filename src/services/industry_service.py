@@ -66,3 +66,32 @@ class IndustryService:
         self, character_id: int, days: int = 30
     ) -> list[EveIndustryJob]:
         return await industry_jobs.get_job_history(self._repo, character_id, days)
+
+    async def get_jobs_by_status(
+        self, character_id: int, status: str
+    ) -> list[EveIndustryJob]:
+        """Get industry jobs with a specific status.
+
+        Args:
+            character_id: Character ID
+            status: Job status (active, paused, ready, delivered, cancelled)
+
+        Returns:
+            List of jobs with the specified status
+        """
+        return await industry_jobs.get_jobs_by_status(self._repo, character_id, status)
+
+    async def get_active_job_count_by_activity(
+        self, character_id: int
+    ) -> dict[int, int]:
+        """Get count of active jobs per activity type.
+
+        Args:
+            character_id: Character ID
+
+        Returns:
+            Dict mapping activity_id to count of active jobs
+        """
+        return await industry_jobs.count_active_jobs_by_activity(
+            self._repo, character_id
+        )

@@ -95,7 +95,7 @@ async def get_journal_entries(
     rows = await repo.fetchall(sql, (character_id, limit))
     return [
         EveJournalEntry(
-            journal_id=row["journal_id"],
+            journal_id=row["entry_id"],
             date=datetime.fromisoformat(row["date"]),
             ref_type=row["ref_type"],
             first_party_id=row["first_party_id"],
@@ -221,10 +221,107 @@ async def get_current_balance(repo: Repository, character_id: int) -> float | No
     return float(row["balance"]) if row else None
 
 
+async def get_entries_by_date_range(
+    repo: Repository,
+    character_id: int,
+    start_date: datetime,
+    end_date: datetime,
+    limit: int = 1000,
+) -> list[EveJournalEntry]:
+    """Get journal entries within a date range.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+        limit: Maximum number of entries to return
+
+    Returns:
+        List of journal entries in the date range, most recent first
+    """
+    sql = """
+    SELECT entry_id, date, ref_type, first_party_id, second_party_id,
+           amount, balance, reason, description, context_id, context_id_type
+    FROM wallet_journal
+    WHERE character_id = ? AND date >= ? AND date <= ?
+    ORDER BY date DESC
+    LIMIT ?
+    """
+
+    rows = await repo.fetchall(
+        sql, (character_id, start_date.isoformat(), end_date.isoformat(), limit)
+    )
+    return [
+        EveJournalEntry(
+            journal_id=row["entry_id"],
+            date=datetime.fromisoformat(row["date"]),
+            ref_type=row["ref_type"],
+            first_party_id=row["first_party_id"],
+            second_party_id=row["second_party_id"],
+            amount=row["amount"],
+            balance=row["balance"],
+            reason=row["reason"],
+            description=row["description"],
+            context_id=row["context_id"],
+            context_id_type=row["context_id_type"],
+        )
+        for row in rows
+    ]
+
+
+async def get_entries_by_types(
+    repo: Repository, character_id: int, ref_types: list[str], limit: int = 1000
+) -> list[EveJournalEntry]:
+    """Get all journal entries of specified types.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+        ref_types: List of reference types to filter
+        limit: Maximum number of entries to return
+
+    Returns:
+        List of journal entries of the specified types
+    """
+    if not ref_types:
+        return []
+
+    placeholders = ",".join("?" * len(ref_types))
+    sql = f"""
+    SELECT entry_id, date, ref_type, first_party_id, second_party_id,
+           amount, balance, reason, description, context_id, context_id_type
+    FROM wallet_journal
+    WHERE character_id = ? AND ref_type IN ({placeholders})
+    ORDER BY date DESC
+    LIMIT ?
+    """
+
+    rows = await repo.fetchall(sql, (character_id, *ref_types, limit))
+    return [
+        EveJournalEntry(
+            journal_id=row["entry_id"],
+            date=datetime.fromisoformat(row["date"]),
+            ref_type=row["ref_type"],
+            first_party_id=row["first_party_id"],
+            second_party_id=row["second_party_id"],
+            amount=row["amount"],
+            balance=row["balance"],
+            reason=row["reason"],
+            description=row["description"],
+            context_id=row["context_id"],
+            context_id_type=row["context_id_type"],
+        )
+        for row in rows
+    ]
+
+
 __all__ = [
     "get_balance_history",
     "get_current_balance",
+    "get_entries_by_date_range",
     "get_entries_by_type",
+    "get_entries_by_types",
     "get_journal_entries",
     "get_latest_journal_date",
     "save_journal_entries",

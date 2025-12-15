@@ -361,6 +361,50 @@ class SDEJsonlParser:
 
         return systems
 
+    def load_solar_system_constellation_ids(self) -> dict[int, int]:
+        """Load solar system to constellation ID mapping from mapSolarSystems.jsonl.
+
+        Returns:
+            Dictionary mapping solar system ID to constellation ID
+
+        """
+        system_constellations = {}
+        try:
+            for data in self._load_jsonl("mapSolarSystems.jsonl"):
+                system_id = data.get("_key")
+                constellation_id = data.get("constellationID")
+
+                if system_id is not None and constellation_id is not None:
+                    system_constellations[int(system_id)] = int(constellation_id)
+        except FileNotFoundError as e:
+            logger.warning(f"Solar system map file not found: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load solar system constellation IDs: {e}")
+
+        return system_constellations
+
+    def load_constellation_region_ids(self) -> dict[int, int]:
+        """Load constellation to region ID mapping from mapConstellations.jsonl.
+
+        Returns:
+            Dictionary mapping constellation ID to region ID
+
+        """
+        constellation_regions = {}
+        try:
+            for data in self._load_jsonl("mapConstellations.jsonl"):
+                constellation_id = data.get("_key")
+                region_id = data.get("regionID")
+
+                if constellation_id is not None and region_id is not None:
+                    constellation_regions[int(constellation_id)] = int(region_id)
+        except FileNotFoundError as e:
+            logger.warning(f"Constellation map file not found: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load constellation region IDs: {e}")
+
+        return constellation_regions
+
     def _load_jsonl(self, filename: str) -> Iterator[dict[str, Any]]:
         """Load a JSONL file and return an iterator of dictionaries.
 

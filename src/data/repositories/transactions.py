@@ -194,10 +194,111 @@ async def get_transaction_count(repo: Repository, character_id: int) -> int:
     return row["count"] if row else 0
 
 
+async def get_transactions_by_date_range(
+    repo: Repository,
+    character_id: int,
+    start_date: datetime,
+    end_date: datetime,
+    limit: int = 1000,
+) -> list[EveTransaction]:
+    """Get transactions within a date range.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+        limit: Maximum number of transactions to return
+
+    Returns:
+        List of transactions in the date range, most recent first
+    """
+    sql = """
+    SELECT transaction_id, date, type_id, quantity, unit_price, client_id,
+           location_id, is_buy, is_personal, journal_ref_id
+    FROM wallet_transactions
+    WHERE character_id = ? AND date >= ? AND date <= ?
+    ORDER BY date DESC
+    LIMIT ?
+    """
+
+    rows = await repo.fetchall(
+        sql, (character_id, start_date.isoformat(), end_date.isoformat(), limit)
+    )
+    return [
+        EveTransaction(
+            transaction_id=row["transaction_id"],
+            date=datetime.fromisoformat(row["date"]),
+            type_id=row["type_id"],
+            quantity=row["quantity"],
+            unit_price=row["unit_price"],
+            client_id=row["client_id"],
+            location_id=row["location_id"],
+            is_buy=bool(row["is_buy"]),
+            is_personal=bool(row["is_personal"]),
+            journal_ref_id=row["journal_ref_id"],
+        )
+        for row in rows
+    ]
+
+
+async def get_transactions_by_type_and_date(
+    repo: Repository,
+    character_id: int,
+    type_id: int,
+    start_date: datetime,
+    end_date: datetime,
+    limit: int = 1000,
+) -> list[EveTransaction]:
+    """Get transactions for a specific type within a date range.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+        type_id: Item type ID
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+        limit: Maximum number of transactions to return
+
+    Returns:
+        List of transactions for the type in the date range
+    """
+    sql = """
+    SELECT transaction_id, date, type_id, quantity, unit_price, client_id,
+           location_id, is_buy, is_personal, journal_ref_id
+    FROM wallet_transactions
+    WHERE character_id = ? AND type_id = ? AND date >= ? AND date <= ?
+    ORDER BY date DESC
+    LIMIT ?
+    """
+
+    rows = await repo.fetchall(
+        sql,
+        (character_id, type_id, start_date.isoformat(), end_date.isoformat(), limit),
+    )
+    return [
+        EveTransaction(
+            transaction_id=row["transaction_id"],
+            date=datetime.fromisoformat(row["date"]),
+            type_id=row["type_id"],
+            quantity=row["quantity"],
+            unit_price=row["unit_price"],
+            client_id=row["client_id"],
+            location_id=row["location_id"],
+            is_buy=bool(row["is_buy"]),
+            is_personal=bool(row["is_personal"]),
+            journal_ref_id=row["journal_ref_id"],
+        )
+        for row in rows
+    ]
+
+
 __all__ = [
     "get_latest_transaction_date",
     "get_transaction_count",
     "get_transactions",
+    "get_transactions_by_date_range",
     "get_transactions_by_type",
+    "get_transactions_by_type_and_date",
     "save_transactions",
 ]

@@ -253,9 +253,91 @@ async def get_job_history(
     ]
 
 
+async def get_jobs_by_status(
+    repo: Repository, character_id: int, status: str
+) -> list[EveIndustryJob]:
+    """Get industry jobs for a specific status.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+        status: Job status (active, paused, ready, delivered, cancelled)
+
+    Returns:
+        List of jobs with the specified status
+    """
+    sql = """
+    SELECT job_id, installer_id, facility_id, activity_id, blueprint_id,
+           blueprint_type_id, blueprint_location_id, output_location_id, runs, cost,
+           licensed_runs, probability, product_type_id, status, duration, start_date,
+           end_date, pause_date, completed_date, completed_character_id, successful_runs
+    FROM industry_jobs
+    WHERE character_id = ? AND status = ?
+    ORDER BY end_date ASC
+    """
+
+    rows = await repo.fetchall(sql, (character_id, status))
+    return [
+        EveIndustryJob(
+            job_id=row["job_id"],
+            installer_id=row["installer_id"],
+            facility_id=row["facility_id"],
+            station_id=row["facility_id"],
+            activity_id=row["activity_id"],
+            blueprint_id=row["blueprint_id"],
+            blueprint_type_id=row["blueprint_type_id"],
+            blueprint_location_id=row["blueprint_location_id"],
+            output_location_id=row["output_location_id"],
+            runs=row["runs"],
+            cost=row["cost"],
+            licensed_runs=row["licensed_runs"],
+            probability=row["probability"],
+            product_type_id=row["product_type_id"],
+            status=row["status"],
+            duration=row["duration"],
+            start_date=datetime.fromisoformat(row["start_date"]),
+            end_date=datetime.fromisoformat(row["end_date"]),
+            pause_date=datetime.fromisoformat(row["pause_date"])
+            if row["pause_date"]
+            else None,
+            completed_date=datetime.fromisoformat(row["completed_date"])
+            if row["completed_date"]
+            else None,
+            completed_character_id=row["completed_character_id"],
+            successful_runs=row["successful_runs"],
+        )
+        for row in rows
+    ]
+
+
+async def count_active_jobs_by_activity(
+    repo: Repository, character_id: int
+) -> dict[int, int]:
+    """Get count of active jobs per activity type.
+
+    Args:
+        repo: Repository instance
+        character_id: Character ID
+
+    Returns:
+        Dict mapping activity_id to count of active jobs
+    """
+    sql = """
+    SELECT activity_id, COUNT(*) as count
+    FROM industry_jobs
+    WHERE character_id = ? AND status IN ('active', 'paused')
+    GROUP BY activity_id
+    """
+
+    rows = await repo.fetchall(sql, (character_id,))
+    return {row["activity_id"]: row["count"] for row in rows}
+
+
 __all__ = [
+    "count_active_jobs_by_activity",
     "get_active_jobs",
     "get_job_history",
     "get_jobs_by_activity",
+    "get_jobs_by_status",
     "save_jobs",
 ]

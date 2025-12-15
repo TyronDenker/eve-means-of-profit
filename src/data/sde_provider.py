@@ -86,6 +86,8 @@ class SDEProvider:
         self._region_names_cache: dict[int, str] | None = None
         self._constellation_names_cache: dict[int, str] | None = None
         self._solar_system_names_cache: dict[int, str] | None = None
+        self._solar_system_constellation_ids_cache: dict[int, int] | None = None
+        self._constellation_region_ids_cache: dict[int, int] | None = None
 
         # Index hashmaps - for fast filtered queries
         # Format: dict[filter_value, list[object_id]]
@@ -386,6 +388,28 @@ class SDEProvider:
         """
         return self._load_solar_system_names().get(system_id)
 
+    def get_solar_system_constellation_id(self, system_id: int) -> int | None:
+        """Get constellation ID for a solar system.
+
+        Args:
+            system_id: Solar system ID to look up
+
+        Returns:
+            Constellation ID or None if not found
+        """
+        return self._load_solar_system_constellation_ids().get(system_id)
+
+    def get_constellation_region_id(self, constellation_id: int) -> int | None:
+        """Get region ID for a constellation.
+
+        Args:
+            constellation_id: Constellation ID to look up
+
+        Returns:
+            Region ID or None if not found
+        """
+        return self._load_constellation_region_ids().get(constellation_id)
+
     def get_all_solar_systems(self) -> dict[int, str]:
         """Get all solar systems.
 
@@ -415,6 +439,8 @@ class SDEProvider:
         self._region_names_cache = None
         self._constellation_names_cache = None
         self._solar_system_names_cache = None
+        self._solar_system_constellation_ids_cache = None
+        self._constellation_region_ids_cache = None
 
         # Clear index hashmaps (set to None for consistency)
         self._types_by_group_index = None
@@ -605,6 +631,8 @@ class SDEProvider:
             "region_names_cache": self._region_names_cache,
             "constellation_names_cache": self._constellation_names_cache,
             "solar_system_names_cache": self._solar_system_names_cache,
+            "solar_system_constellation_ids_cache": self._solar_system_constellation_ids_cache,
+            "constellation_region_ids_cache": self._constellation_region_ids_cache,
             "types_by_group_index": self._types_by_group_index,
             "types_by_category_index": self._types_by_category_index,
             "types_by_market_group_index": self._types_by_market_group_index,
@@ -700,6 +728,12 @@ class SDEProvider:
                 "npc_station_system_ids_cache"
             )
             self._region_names_cache = payload.get("region_names_cache")
+            self._solar_system_constellation_ids_cache = payload.get(
+                "solar_system_constellation_ids_cache"
+            )
+            self._constellation_region_ids_cache = payload.get(
+                "constellation_region_ids_cache"
+            )
             self._constellation_names_cache = payload.get("constellation_names_cache")
             self._solar_system_names_cache = payload.get("solar_system_names_cache")
             self._types_by_group_index = payload.get("types_by_group_index")
@@ -732,6 +766,8 @@ class SDEProvider:
         self._load_npc_station_names()
         self._load_npc_station_system_ids()
         self._load_region_names()
+        self._load_solar_system_constellation_ids()
+        self._load_constellation_region_ids()
         self._load_constellation_names()
         self._load_solar_system_names()
         self._load_blueprint_type_ids()
@@ -817,6 +853,38 @@ class SDEProvider:
                 f"Loaded {len(self._solar_system_names_cache)} solar system names"
             )
         return self._solar_system_names_cache
+
+    def _load_solar_system_constellation_ids(self) -> dict[int, int]:
+        """Load and cache solar system to constellation ID mapping.
+
+        Returns:
+            Dictionary mapping solar system ID to constellation ID
+        """
+        if self._solar_system_constellation_ids_cache is None:
+            logger.info("Loading solar system constellation IDs from SDE...")
+            self._solar_system_constellation_ids_cache = (
+                self._parser.load_solar_system_constellation_ids()
+            )
+            logger.info(
+                f"Loaded {len(self._solar_system_constellation_ids_cache)} system-constellation mappings"
+            )
+        return self._solar_system_constellation_ids_cache
+
+    def _load_constellation_region_ids(self) -> dict[int, int]:
+        """Load and cache constellation to region ID mapping.
+
+        Returns:
+            Dictionary mapping constellation ID to region ID
+        """
+        if self._constellation_region_ids_cache is None:
+            logger.info("Loading constellation region IDs from SDE...")
+            self._constellation_region_ids_cache = (
+                self._parser.load_constellation_region_ids()
+            )
+            logger.info(
+                f"Loaded {len(self._constellation_region_ids_cache)} constellation-region mappings"
+            )
+        return self._constellation_region_ids_cache
 
     def _load_types(self) -> dict[int, EveType]:
         """Load and cache all types."""

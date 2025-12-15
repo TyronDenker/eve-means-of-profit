@@ -7,7 +7,7 @@ location resolution, and asset management operations.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from data import SDEProvider
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from data.repositories import assets as asset_repo
 from models.app import EnrichedAsset
+from models.app.asset_tree import AssetTreeNode
 from models.eve import EveAsset
 
 logger = logging.getLogger(__name__)
@@ -224,6 +225,7 @@ class AssetService:
         """
         # Apply location name based on category
         if loc_info.category == "station":
+            asset.station_id = loc_info.location_id
             asset.station_name = loc_info.name
             # Stations have system info - resolve it
             if loc_info.solar_system_id:
@@ -292,3 +294,168 @@ class AssetService:
         if loc_type == "item":
             return None, None
         return loc_id, loc_type
+
+    async def get_asset_tree(
+        self, character_id: int, character_name: str
+    ) -> dict[str, Any]:
+        """Build hierarchical asset tree organized by location.
+
+        Organizes assets by region → constellation → system → station/structure.
+
+        Args:
+            character_id: Character ID
+            character_name: Character name
+
+        Returns:
+            Dict with tree structure containing location hierarchy
+        """
+        enriched_assets = await self.get_all_enriched_assets(
+            character_id=character_id,
+            character_name=character_name,
+            resolve_locations=True,
+            refresh_locations=False,  # Use cached for speed
+        )
+
+        return self.build_asset_tree_from_assets(enriched_assets)
+
+    def build_asset_tree_from_assets(
+        self, enriched_assets: list[EnrichedAsset]
+    ) -> dict[str, Any]:
+        """Build hierarchical asset tree from pre-enriched assets.
+
+        Uses canonical location IDs (station/structure/system) so containers
+        inside the same location are coalesced into a single node. This avoids
+        duplicate locations and ensures totals aggregate correctly.
+
+        Args:
+            enriched_assets: Assets with location fields already resolved
+
+        Returns:
+            Dict with tree structure containing location hierarchy
+        """
+
+        # Build tree structure: location_id -> node
+        nodes: dict[int, AssetTreeNode] = {}
+
+        def _resolve_location_context(asset: EnrichedAsset) -> dict[str, Any]:
+            """Resolve canonical location identifiers for an asset."""
+            # Prefer explicit structure/station IDs over container IDs
+            system_id = asset.system_id
+            constellation_id = asset.constellation_id
+            region_id = asset.region_id
+
+            # If station/structure, prefer those IDs as canonical location
+            if asset.structure_id:
+                loc_id = asset.structure_id
+                location_name = asset.structure_name or f"Structure {loc_id}"
+                location_type = "structure"
+                system_id_local = system_id
+            elif asset.station_id:
+                loc_id = asset.station_id
+                location_name = asset.station_name or f"Station {loc_id}"
+                location_type = "station"
+                system_id_local = system_id or self._sde.get_npc_station_system_id(
+                    loc_id
+                )
+            else:
+                # Fall back to solar system (if known) or raw location_id
+                loc_id = asset.system_id or asset.location_id
+                system_id_local = asset.system_id or (
+                    self._sde.get_solar_system_id_for_structure(asset.location_id)
+                    if hasattr(self._sde, "get_solar_system_id_for_structure")
+                    else None
+                )
+                location_type = "solar_system" if system_id_local else "unknown"
+                if system_id_local:
+                    loc_id = system_id_local
+                location_name = (
+                    asset.system_name
+                    or self._sde.get_solar_system_name(system_id_local)
+                    or f"Location {loc_id}"
+                )
+
+            # Fill in constellation/region from system if missing
+            if system_id_local and not constellation_id:
+                constellation_id = self._sde.get_solar_system_constellation_id(
+                    system_id_local
+                )
+            if constellation_id and not region_id:
+                region_id = self._sde.get_constellation_region_id(constellation_id)
+
+            return {
+                "location_id": loc_id,
+                "location_name": location_name,
+                "location_type": location_type,
+                "system_id": system_id_local,
+                "constellation_id": constellation_id,
+                "region_id": region_id,
+            }
+
+        # Create nodes for each location with assets
+        for asset in enriched_assets:
+            ctx = _resolve_location_context(asset)
+            loc_id = ctx["location_id"]
+            location_name = ctx["location_name"]
+            location_type = ctx["location_type"]
+            system_id = ctx["system_id"]
+            constellation_id = ctx["constellation_id"]
+            region_id = ctx["region_id"]
+
+            # Region node
+            if region_id and region_id not in nodes:
+                nodes[region_id] = AssetTreeNode(
+                    location_id=region_id,
+                    location_name=self._sde.get_region_name(region_id)
+                    or f"Region {region_id}",
+                    location_type="region",
+                )
+
+            # Constellation node
+            if constellation_id and constellation_id not in nodes:
+                nodes[constellation_id] = AssetTreeNode(
+                    location_id=constellation_id,
+                    location_name=self._sde.get_constellation_name(constellation_id)
+                    or f"Constellation {constellation_id}",
+                    location_type="constellation",
+                    parent_id=region_id,
+                )
+
+            # System node
+            if system_id and system_id not in nodes:
+                nodes[system_id] = AssetTreeNode(
+                    location_id=system_id,
+                    location_name=self._sde.get_solar_system_name(system_id)
+                    or f"System {system_id}",
+                    location_type="solar_system",
+                    parent_id=constellation_id,
+                )
+
+            # Leaf (station/structure/system)
+            if loc_id not in nodes:
+                parent_id = system_id or constellation_id or region_id
+                nodes[loc_id] = AssetTreeNode(
+                    location_id=loc_id,
+                    location_name=location_name,
+                    location_type=location_type,
+                    parent_id=parent_id,
+                    item_count=0,
+                    total_value=0.0,
+                )
+
+            # Accumulate direct asset values on canonical node
+            nodes[loc_id].item_count += asset.quantity
+            nodes[loc_id].total_value += (asset.market_value or 0.0) * asset.quantity
+
+        # Build parent-child relationships
+        root_nodes: list[AssetTreeNode] = []
+        for node in nodes.values():
+            if node.parent_id and node.parent_id in nodes:
+                parent_node = nodes[node.parent_id]
+                parent_node.add_child(node)
+            else:
+                root_nodes.append(node)
+
+        # Sort root nodes by name
+        root_nodes.sort(key=lambda n: n.location_name)
+
+        return {"roots": root_nodes, "total_locations": len(nodes)}
